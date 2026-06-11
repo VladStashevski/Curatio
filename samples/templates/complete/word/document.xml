@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Номер страхового случая: TEST-2026-001</w:t></w:r></w:p>
+    <w:p><w:r><w:t>ФИО клиента: Тестов Алексей Примерович</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Дата события: 10.06.2026</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Тип страхового случая: Повреждение имущества</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Номер полиса: POLICY-TEST-001</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Страховая сумма: 125 000,50 руб.</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Описание события: Синтетический пример без реальных персональных данных.</w:t></w:r></w:p>
+  </w:body>
+</w:document>

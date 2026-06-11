@@ -1,0 +1,98 @@
+name: build-and-release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet restore Curatio.sln
+      - run: dotnet build Curatio.sln --configuration Release --no-restore
+      - run: dotnet test Curatio.sln --configuration Release --no-build
+
+  publish:
+    needs: build-test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Curatio-win-x64
+            os: windows-latest
+            runtime: win-x64
+          - name: Curatio-macos-arm64
+            os: macos-latest
+            runtime: osx-arm64
+          - name: Curatio-macos-x64
+            os: macos-15-intel
+            runtime: osx-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish ${{ matrix.name }}
+        run: >
+          dotnet publish src/Curatio.Desktop/Curatio.Desktop.csproj
+          --configuration Release
+          --runtime ${{ matrix.runtime }}
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=None
+          --output publish/${{ matrix.name }}
+      - name: Remove debug symbols
+        shell: pwsh
+        run: Get-ChildItem publish/${{ matrix.name }} -Filter *.pdb -Recurse | Remove-Item
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts
+          Compress-Archive -Path publish/${{ matrix.name }}/* -DestinationPath artifacts/${{ matrix.name }}.zip
+      - name: Package macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          chmod +x publish/${{ matrix.name }}/Curatio
+          mkdir -p artifacts
+          cd publish/${{ matrix.name }}
+          zip -r ../../artifacts/${{ matrix.name }}.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: artifacts/${{ matrix.name }}.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create checksums
+        working-directory: artifacts
+        run: sha256sum *.zip > SHA256SUMS.txt
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.zip
+            artifacts/SHA256SUMS.txt
+          generate_release_notes: true
