@@ -5,7 +5,7 @@ namespace Curatio.Infrastructure;
 
 public sealed class SqliteRecordRepository(string databasePath) : IRecordRepository, ISettingsStore
 {
-    private const int CurrentExtractionVersion = 3;
+    private const int CurrentExtractionVersion = 5;
 
     private readonly string _connectionString = new SqliteConnectionStringBuilder
     {
@@ -30,8 +30,12 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
                 client_full_name TEXT NOT NULL DEFAULT '',
                 event_date TEXT NULL,
                 claim_type TEXT NOT NULL DEFAULT '',
+                check_type TEXT NOT NULL DEFAULT '',
                 policy_number TEXT NOT NULL DEFAULT '',
                 insured_amount TEXT NULL,
+                financial_sanctions_amount TEXT NULL,
+                payment_reduction_amount TEXT NULL,
+                penalty_amount TEXT NULL,
                 event_description TEXT NOT NULL DEFAULT '',
                 insurance_organization TEXT NOT NULL DEFAULT '',
                 expert_name TEXT NOT NULL DEFAULT '',
@@ -55,6 +59,7 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
                 recommendations TEXT NOT NULL DEFAULT '',
                 source_file_name TEXT NOT NULL,
                 full_path TEXT NOT NULL,
+                case_key TEXT NOT NULL DEFAULT '',
                 file_size INTEGER NOT NULL,
                 file_modified_at TEXT NOT NULL,
                 processed_at TEXT NOT NULL,
@@ -66,8 +71,7 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
                 api_error_message TEXT NULL
                 ,extraction_version INTEGER NOT NULL DEFAULT 0
             );
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_records_file_identity
-                ON records(full_path, file_size, file_modified_at);
+            DROP INDEX IF EXISTS ux_records_file_identity;
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -75,6 +79,7 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
         await EnsureRecordColumnsAsync(connection, cancellationToken);
+        await EnsureIndexesAsync(connection, cancellationToken);
     }
 
     public async Task<bool> IsImportedAsync(
@@ -103,6 +108,32 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
         return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) == 1;
     }
 
+    public async Task DeleteByPathsAsync(IEnumerable<string> paths, CancellationToken cancellationToken)
+    {
+        var normalizedPaths = paths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalizedPaths.Length == 0)
+            return;
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        foreach (var path in normalizedPaths)
+        {
+            var command = connection.CreateCommand();
+            command.Transaction = (SqliteTransaction)transaction;
+            command.CommandText = "DELETE FROM records WHERE full_path = $path;";
+            command.Parameters.AddWithValue("$path", path);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     public async Task SaveAsync(InsuranceRecord record, CancellationToken cancellationToken)
     {
         await using var connection = new SqliteConnection(_connectionString);
@@ -112,32 +143,38 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
             """
             INSERT INTO records (
                 claim_number, client_full_name, event_date, claim_type, policy_number,
-                insured_amount, event_description, insurance_organization, expert_name,
+                check_type, insured_amount, financial_sanctions_amount, payment_reduction_amount,
+                penalty_amount, event_description, insurance_organization, expert_name,
                 expert_specialty, medical_document_number, gender, birth_date,
                 medical_organization, examination_form, examination_period, care_form,
                 care_conditions, care_profile, care_period, case_outcome, primary_diagnosis,
                 diagnosis_complication, comorbid_diagnosis, operation,
-                clinical_statistical_group, recommendations, source_file_name, full_path, file_size,
+                clinical_statistical_group, recommendations, source_file_name, full_path, case_key, file_size,
                 file_modified_at, processed_at, status, error_message, external_id,
                 send_status, sent_at, api_error_message, extraction_version
             ) VALUES (
                 $claimNumber, $clientName, $eventDate, $claimType, $policyNumber,
-                $amount, $description, $insuranceOrganization, $expertName,
+                $checkType, $amount, $financialSanctionsAmount, $paymentReductionAmount,
+                $penaltyAmount, $description, $insuranceOrganization, $expertName,
                 $expertSpecialty, $medicalDocumentNumber, $gender, $birthDate,
                 $medicalOrganization, $examinationForm, $examinationPeriod, $careForm,
                 $careConditions, $careProfile, $carePeriod, $caseOutcome, $primaryDiagnosis,
                 $diagnosisComplication, $comorbidDiagnosis, $operation,
-                $clinicalStatisticalGroup, $recommendations, $fileName, $path, $fileSize,
+                $clinicalStatisticalGroup, $recommendations, $fileName, $path, $caseKey, $fileSize,
                 $modified, $processed, $status, $error, $externalId,
                 $sendStatus, $sentAt, $apiError, $extractionVersion
             )
-            ON CONFLICT(full_path, file_size, file_modified_at) DO UPDATE SET
+            ON CONFLICT(full_path, file_size, file_modified_at, case_key) DO UPDATE SET
                 claim_number = excluded.claim_number,
                 client_full_name = excluded.client_full_name,
                 event_date = excluded.event_date,
                 claim_type = excluded.claim_type,
+                check_type = excluded.check_type,
                 policy_number = excluded.policy_number,
                 insured_amount = excluded.insured_amount,
+                financial_sanctions_amount = excluded.financial_sanctions_amount,
+                payment_reduction_amount = excluded.payment_reduction_amount,
+                penalty_amount = excluded.penalty_amount,
                 event_description = excluded.event_description,
                 insurance_organization = excluded.insurance_organization,
                 expert_name = excluded.expert_name,
@@ -164,7 +201,7 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
                 error_message = excluded.error_message,
                 extraction_version = excluded.extraction_version;
             SELECT id FROM records
-            WHERE full_path = $path AND file_size = $fileSize AND file_modified_at = $modified;
+            WHERE full_path = $path AND file_size = $fileSize AND file_modified_at = $modified AND case_key = $caseKey;
             """;
         AddParameters(command, record);
         record.Id = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
@@ -182,8 +219,12 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
                 client_full_name = $clientName,
                 event_date = $eventDate,
                 claim_type = $claimType,
+                check_type = $checkType,
                 policy_number = $policyNumber,
                 insured_amount = $amount,
+                financial_sanctions_amount = $financialSanctionsAmount,
+                payment_reduction_amount = $paymentReductionAmount,
+                penalty_amount = $penaltyAmount,
                 event_description = $description,
                 insurance_organization = $insuranceOrganization,
                 expert_name = $expertName,
@@ -263,8 +304,12 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
         command.Parameters.AddWithValue("$clientName", record.ClientFullName);
         command.Parameters.AddWithValue("$eventDate", DbDateValue(record.EventDate));
         command.Parameters.AddWithValue("$claimType", record.ClaimType);
+        command.Parameters.AddWithValue("$checkType", record.CheckType);
         command.Parameters.AddWithValue("$policyNumber", record.PolicyNumber);
         command.Parameters.AddWithValue("$amount", record.InsuredAmount?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$financialSanctionsAmount", record.FinancialSanctionsAmount?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$paymentReductionAmount", record.PaymentReductionAmount?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$penaltyAmount", record.PenaltyAmount?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$description", record.EventDescription);
         command.Parameters.AddWithValue("$insuranceOrganization", record.InsuranceOrganization);
         command.Parameters.AddWithValue("$expertName", record.ExpertName);
@@ -288,6 +333,7 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
         command.Parameters.AddWithValue("$recommendations", record.Recommendations);
         command.Parameters.AddWithValue("$fileName", record.SourceFileName);
         command.Parameters.AddWithValue("$path", record.FullPath);
+        command.Parameters.AddWithValue("$caseKey", record.CaseKey);
         command.Parameters.AddWithValue("$fileSize", record.FileSize);
         command.Parameters.AddWithValue("$modified", record.FileModifiedAt.ToUniversalTime().ToString("O"));
         command.Parameters.AddWithValue("$processed", record.ProcessedAt.ToUniversalTime().ToString("O"));
@@ -314,8 +360,12 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
         ClientFullName = reader.GetString(reader.GetOrdinal("client_full_name")),
         EventDate = ReadDateOnly(reader, "event_date"),
         ClaimType = reader.GetString(reader.GetOrdinal("claim_type")),
+        CheckType = reader.GetString(reader.GetOrdinal("check_type")),
         PolicyNumber = reader.GetString(reader.GetOrdinal("policy_number")),
         InsuredAmount = ReadDecimal(reader, "insured_amount"),
+        FinancialSanctionsAmount = ReadDecimal(reader, "financial_sanctions_amount"),
+        PaymentReductionAmount = ReadDecimal(reader, "payment_reduction_amount"),
+        PenaltyAmount = ReadDecimal(reader, "penalty_amount"),
         EventDescription = reader.GetString(reader.GetOrdinal("event_description")),
         InsuranceOrganization = reader.GetString(reader.GetOrdinal("insurance_organization")),
         ExpertName = reader.GetString(reader.GetOrdinal("expert_name")),
@@ -339,6 +389,7 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
         Recommendations = reader.GetString(reader.GetOrdinal("recommendations")),
         SourceFileName = reader.GetString(reader.GetOrdinal("source_file_name")),
         FullPath = reader.GetString(reader.GetOrdinal("full_path")),
+        CaseKey = reader.GetString(reader.GetOrdinal("case_key")),
         FileSize = reader.GetInt64(reader.GetOrdinal("file_size")),
         FileModifiedAt = ReadDate(reader, "file_modified_at") ?? DateTime.MinValue,
         ProcessedAt = ReadDate(reader, "processed_at") ?? DateTime.MinValue,
@@ -398,6 +449,10 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
 
         var columns = new Dictionary<string, string>
         {
+            ["check_type"] = "TEXT NOT NULL DEFAULT ''",
+            ["financial_sanctions_amount"] = "TEXT NULL",
+            ["payment_reduction_amount"] = "TEXT NULL",
+            ["penalty_amount"] = "TEXT NULL",
             ["insurance_organization"] = "TEXT NOT NULL DEFAULT ''",
             ["expert_name"] = "TEXT NOT NULL DEFAULT ''",
             ["expert_specialty"] = "TEXT NOT NULL DEFAULT ''",
@@ -418,6 +473,7 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
             ["operation"] = "TEXT NOT NULL DEFAULT ''",
             ["clinical_statistical_group"] = "TEXT NOT NULL DEFAULT ''",
             ["recommendations"] = "TEXT NOT NULL DEFAULT ''",
+            ["case_key"] = "TEXT NOT NULL DEFAULT ''",
             ["extraction_version"] = "INTEGER NOT NULL DEFAULT 0"
         };
 
@@ -430,5 +486,22 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
             migration.CommandText = $"ALTER TABLE records ADD COLUMN {name} {definition};";
             await migration.ExecuteNonQueryAsync(cancellationToken);
         }
+    }
+
+    private static async Task EnsureIndexesAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var drop = connection.CreateCommand();
+        drop.CommandText = "DROP INDEX IF EXISTS ux_records_file_identity;";
+        await drop.ExecuteNonQueryAsync(cancellationToken);
+
+        var create = connection.CreateCommand();
+        create.CommandText =
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_records_file_case_identity
+                ON records(full_path, file_size, file_modified_at, case_key);
+            """;
+        await create.ExecuteNonQueryAsync(cancellationToken);
     }
 }

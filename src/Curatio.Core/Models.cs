@@ -20,15 +20,19 @@ public enum SendStatus
     Failed
 }
 
-public sealed class InsuranceRecord : INotifyPropertyChanged
+public sealed partial class InsuranceRecord : INotifyPropertyChanged
 {
     private long _id;
     private string _claimNumber = "";
     private string _clientFullName = "";
     private DateTime? _eventDate;
     private string _claimType = "";
+    private string _checkType = "";
     private string _policyNumber = "";
     private decimal? _insuredAmount;
+    private decimal? _financialSanctionsAmount;
+    private decimal? _paymentReductionAmount;
+    private decimal? _penaltyAmount;
     private string _eventDescription = "";
     private string _insuranceOrganization = "";
     private string _expertName = "";
@@ -58,8 +62,12 @@ public sealed class InsuranceRecord : INotifyPropertyChanged
     public string ClientFullName { get => _clientFullName; set => SetField(ref _clientFullName, value); }
     public DateTime? EventDate { get => _eventDate; set => SetField(ref _eventDate, value); }
     public string ClaimType { get => _claimType; set => SetField(ref _claimType, value); }
+    public string CheckType { get => _checkType; set => SetField(ref _checkType, value); }
     public string PolicyNumber { get => _policyNumber; set => SetField(ref _policyNumber, value); }
     public decimal? InsuredAmount { get => _insuredAmount; set => SetField(ref _insuredAmount, value); }
+    public decimal? FinancialSanctionsAmount { get => _financialSanctionsAmount; set => SetField(ref _financialSanctionsAmount, value); }
+    public decimal? PaymentReductionAmount { get => _paymentReductionAmount; set => SetField(ref _paymentReductionAmount, value); }
+    public decimal? PenaltyAmount { get => _penaltyAmount; set => SetField(ref _penaltyAmount, value); }
     public string EventDescription { get => _eventDescription; set => SetField(ref _eventDescription, value); }
     public string InsuranceOrganization { get => _insuranceOrganization; set => SetField(ref _insuranceOrganization, value); }
     public string ExpertName { get => _expertName; set => SetField(ref _expertName, value); }
@@ -83,6 +91,7 @@ public sealed class InsuranceRecord : INotifyPropertyChanged
     public string Recommendations { get => _recommendations; set => SetField(ref _recommendations, value); }
     public string SourceFileName { get; set; } = "";
     public string FullPath { get; set; } = "";
+    public string CaseKey { get; set; } = "";
     public long FileSize { get; set; }
     public DateTime FileModifiedAt { get; set; }
     public DateTime ProcessedAt { get; set; }
@@ -106,12 +115,30 @@ public sealed class InsuranceRecord : INotifyPropertyChanged
         get => InsuredAmount?.ToString("0.##", CultureInfo.GetCultureInfo("ru-RU")) ?? "";
         set
         {
-            var normalized = value.Replace(" ", "", StringComparison.Ordinal);
+            var normalized = RegexWhitespace().Replace(value, "");
             InsuredAmount = decimal.TryParse(normalized, NumberStyles.Number, CultureInfo.GetCultureInfo("ru-RU"), out var amount)
                 || decimal.TryParse(normalized, NumberStyles.Number, CultureInfo.InvariantCulture, out amount)
                 ? amount
                 : null;
         }
+    }
+
+    public string FinancialSanctionsAmountText
+    {
+        get => FinancialSanctionsAmount?.ToString("0.##", CultureInfo.GetCultureInfo("ru-RU")) ?? "";
+        set => FinancialSanctionsAmount = ParseAmount(value);
+    }
+
+    public string PaymentReductionAmountText
+    {
+        get => PaymentReductionAmount?.ToString("0.##", CultureInfo.GetCultureInfo("ru-RU")) ?? "";
+        set => PaymentReductionAmount = ParseAmount(value);
+    }
+
+    public string PenaltyAmountText
+    {
+        get => PenaltyAmount?.ToString("0.##", CultureInfo.GetCultureInfo("ru-RU")) ?? "";
+        set => PenaltyAmount = ParseAmount(value);
     }
 
     public string BirthDateText
@@ -124,6 +151,15 @@ public sealed class InsuranceRecord : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    private static decimal? ParseAmount(string value)
+    {
+        var normalized = RegexWhitespace().Replace(value, "");
+        return decimal.TryParse(normalized, NumberStyles.Number, CultureInfo.GetCultureInfo("ru-RU"), out var amount)
+            || decimal.TryParse(normalized, NumberStyles.Number, CultureInfo.InvariantCulture, out amount)
+            ? amount
+            : null;
+    }
+
     private void SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {
         if (EqualityComparer<T>.Default.Equals(field, value))
@@ -132,6 +168,9 @@ public sealed class InsuranceRecord : INotifyPropertyChanged
         field = value;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s+")]
+    private static partial System.Text.RegularExpressions.Regex RegexWhitespace();
 }
 
 public sealed record ProcessingProgress(int Processed, int Total, string CurrentFile);
@@ -141,7 +180,8 @@ public sealed record ProcessingLog(DateTime Timestamp, string FileName, string M
 public sealed record ScanResult(
     IReadOnlyList<InsuranceRecord> Records,
     IReadOnlyList<ProcessingLog> Logs,
-    int SkippedDuplicates);
+    int SkippedDuplicates,
+    IReadOnlyList<string> ReplacedPaths);
 
 public sealed class ExtractionRuleSet
 {

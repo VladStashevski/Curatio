@@ -233,6 +233,11 @@
                                   Tag="medicalOrganization"
                                   Binding="{ReflectionBinding MedicalOrganization, Mode=TwoWay}"
                                   Width="360" />
+              <DataGridTextColumn Header="Вид проверки"
+                                  Tag="checkType"
+                                  CellTheme="{StaticResource CenteredDataGridCell}"
+                                  Binding="{ReflectionBinding CheckType, Mode=TwoWay}"
+                                  Width="150" />
               <DataGridTextColumn Header="Форма экспертизы"
                                   Tag="examinationForm"
                                   CellTheme="{StaticResource CenteredDataGridCell}"
@@ -262,10 +267,25 @@
                                   Tag="recommendations"
                                   Binding="{ReflectionBinding Recommendations, Mode=TwoWay}"
                                   Width="380" />
-              <DataGridTextColumn Header="Сумма"
+              <DataGridTextColumn Header="Сумма случая"
                                   Tag="amount"
                                   CellTheme="{StaticResource CenteredDataGridCell}"
                                   Binding="{ReflectionBinding InsuredAmountText, Mode=TwoWay}"
+                                  Width="140" />
+              <DataGridTextColumn Header="Финансовые санкции"
+                                  Tag="financialSanctions"
+                                  CellTheme="{StaticResource CenteredDataGridCell}"
+                                  Binding="{ReflectionBinding FinancialSanctionsAmountText, Mode=TwoWay}"
+                                  Width="170" />
+              <DataGridTextColumn Header="Неоплата/уменьшение"
+                                  Tag="paymentReduction"
+                                  CellTheme="{StaticResource CenteredDataGridCell}"
+                                  Binding="{ReflectionBinding PaymentReductionAmountText, Mode=TwoWay}"
+                                  Width="190" />
+              <DataGridTextColumn Header="Штраф"
+                                  Tag="penalty"
+                                  CellTheme="{StaticResource CenteredDataGridCell}"
+                                  Binding="{ReflectionBinding PenaltyAmountText, Mode=TwoWay}"
                                   Width="140" />
             </DataGrid.Columns>
           </DataGrid>

@@ -30,10 +30,24 @@ public sealed class OpenXmlDocumentTextReader : IDocumentTextReader
             if (mainPart.EndnotesPart?.Endnotes is { } endnotes)
                 roots.Add(endnotes);
 
-            return string.Join(
-                Environment.NewLine,
-                roots.SelectMany(root => root.Descendants<Paragraph>())
-                    .Select(paragraph => paragraph.InnerText)
-                    .Where(text => !string.IsNullOrWhiteSpace(text)));
+            var paragraphs = roots
+                .SelectMany(root => root.Descendants<Paragraph>())
+                .Select(paragraph => paragraph.InnerText)
+                .Where(text => !string.IsNullOrWhiteSpace(text));
+
+            var tableRows = roots
+                .SelectMany(root => root.Descendants<Table>())
+                .SelectMany(table => table.Elements<TableRow>())
+                .Select(row => string.Join(
+                    '\t',
+                    row.Elements<TableCell>()
+                        .Select(cell => NormalizeCell(cell.InnerText))))
+                .Where(row => !string.IsNullOrWhiteSpace(row))
+                .Select(row => $"{DocumentTextMarkers.TableRowPrefix}\t{row}");
+
+            return string.Join(Environment.NewLine, paragraphs.Concat(tableRows));
         }, cancellationToken);
+
+    private static string NormalizeCell(string value) =>
+        string.Join(' ', value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 }

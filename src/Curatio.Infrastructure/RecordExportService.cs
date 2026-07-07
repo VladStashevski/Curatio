@@ -12,10 +12,11 @@ public sealed class RecordExportService : IRecordExportService
         "Номер заключения", "Дата заключения", "ФИО застрахованного", "Номер полиса",
         "Номер меддокумента", "Пол", "Дата рождения", "Страховая организация",
         "Медицинская организация", "Эксперт", "Специальность эксперта",
-        "Форма экспертизы", "Срок экспертизы", "Форма помощи", "Условия помощи",
+        "Форма экспертизы", "Вид проверки", "Срок экспертизы", "Форма помощи", "Условия помощи",
         "Профиль помощи", "Период помощи", "Исход случая", "Основной диагноз",
         "Осложнение диагноза", "Сопутствующие диагнозы", "Операция", "КСГ",
-        "Выводы", "Рекомендации", "Страховая сумма", "Исходный файл",
+        "Выводы", "Рекомендации", "Сумма случая", "Финансовые санкции",
+        "Неоплата/уменьшение", "Штраф", "Исходный файл",
         "Полный путь", "Дата обработки", "Статус"
     ];
 
@@ -40,6 +41,9 @@ public sealed class RecordExportService : IRecordExportService
             var header = sheet.Range(1, 1, 1, Headers.Length);
             header.Style.Font.Bold = true;
             header.Style.Fill.BackgroundColor = XLColor.FromHtml("#DDEBE8");
+            var amountStart = Array.IndexOf(Headers, "Сумма случая") + 1;
+            var amountEnd = Array.IndexOf(Headers, "Штраф") + 1;
+            sheet.Columns(amountStart, amountEnd).Style.NumberFormat.Format = "#,##0.00";
             sheet.SheetView.FreezeRows(1);
             sheet.Columns().AdjustToContents(8, 50);
             sheet.RangeUsed()?.SetAutoFilter();
@@ -71,6 +75,7 @@ public sealed class RecordExportService : IRecordExportService
         record.ExpertName,
         record.ExpertSpecialty,
         record.ExaminationForm,
+        record.CheckType,
         record.ExaminationPeriod,
         record.CareForm,
         record.CareConditions,
@@ -84,7 +89,10 @@ public sealed class RecordExportService : IRecordExportService
         record.ClinicalStatisticalGroup,
         record.EventDescription,
         record.Recommendations,
-        record.InsuredAmount?.ToString("0.##", CultureInfo.GetCultureInfo("ru-RU")) ?? "",
+        record.InsuredAmount ?? (object)"",
+        record.FinancialSanctionsAmount ?? (object)"",
+        record.PaymentReductionAmount ?? (object)"",
+        record.PenaltyAmount ?? (object)"",
         record.SourceFileName,
         record.FullPath,
         record.ProcessedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm"),

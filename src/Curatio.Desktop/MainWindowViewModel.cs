@@ -59,13 +59,17 @@ public sealed class MainWindowViewModel : ViewModelBase
             CreateColumn("birthDate", "Дата рождения", false),
             CreateColumn("insuranceOrganization", "Страховая организация", false),
             CreateColumn("medicalOrganization", "Медицинская организация", false),
+            CreateColumn("checkType", "Вид проверки"),
+            CreateColumn("amount", "Сумма случая"),
+            CreateColumn("financialSanctions", "Финансовые санкции", false),
+            CreateColumn("paymentReduction", "Неоплата/уменьшение", false),
+            CreateColumn("penalty", "Штраф", false),
             CreateColumn("examinationForm", "Форма экспертизы", false),
             CreateColumn("examinationPeriod", "Срок экспертизы", false),
             CreateColumn("careConditions", "Условия помощи", false),
             CreateColumn("careProfile", "Профиль помощи", false),
             CreateColumn("outcome", "Исход", false),
-            CreateColumn("recommendations", "Рекомендации", false),
-            CreateColumn("amount", "Сумма", false)
+            CreateColumn("recommendations", "Рекомендации", false)
         ];
     }
 
@@ -146,10 +150,10 @@ public sealed class MainWindowViewModel : ViewModelBase
             }
 
             var viewVersion = await _settings.GetAsync("viewVersion");
-            if (viewVersion != "2")
+            if (viewVersion != "4")
             {
                 ApplyDefaultColumnVisibility();
-                await _settings.SetAsync("viewVersion", "2");
+                await _settings.SetAsync("viewVersion", "4");
             }
 
             foreach (var column in TableColumns)
@@ -201,6 +205,7 @@ public sealed class MainWindowViewModel : ViewModelBase
                 _scanCancellation.Token);
             var refreshedPaths = result.Records
                 .Select(record => record.FullPath)
+                .Concat(result.ReplacedPaths)
                 .Where(path => !string.IsNullOrWhiteSpace(path))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             _allRecords.RemoveAll(record => refreshedPaths.Contains(record.FullPath));
@@ -300,7 +305,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             var isVisible = column.Key is
                 "claim" or "date" or "policy" or "medicalDocument" or "expert"
                 or "expertSpecialty" or "careForm" or "carePeriod" or "diagnosis"
-                or "description" or "file" or "status";
+                or "description" or "checkType" or "amount" or "file" or "status";
             column.SetWithoutNotification(isVisible);
             _ = SaveViewSettingAsync($"column.{column.Key}.visible", isVisible.ToString());
         }
