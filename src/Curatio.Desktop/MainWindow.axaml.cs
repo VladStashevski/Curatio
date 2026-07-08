@@ -1,4 +1,6 @@
 using Avalonia.Controls;
+using Avalonia.Layout;
+using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Curatio.Core;
 using System.ComponentModel;
@@ -17,6 +19,7 @@ public sealed partial class MainWindow : Window
         DataContext = viewModel;
         viewModel.PickFolderAsync = PickFolderAsync;
         viewModel.PickExportPathAsync = PickExportPathAsync;
+        viewModel.ConfirmClearRecordsAsync = ConfirmClearRecordsAsync;
         Opened += async (_, _) =>
         {
             await viewModel.LoadAsync();
@@ -86,5 +89,70 @@ public sealed partial class MainWindow : Window
             ]
         });
         return file?.TryGetLocalPath();
+    }
+
+    private async Task<bool> ConfirmClearRecordsAsync(int recordCount)
+    {
+        var dialog = new Window
+        {
+            Title = "Очистить извлечённые данные",
+            Width = 420,
+            Height = 210,
+            MinWidth = 360,
+            MinHeight = 180,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner
+        };
+
+        var title = new TextBlock
+        {
+            Text = "Удалить все извлечённые записи?",
+            FontSize = 16,
+            FontWeight = FontWeight.SemiBold
+        };
+        var message = new TextBlock
+        {
+            Text = $"Будет удалено записей: {recordCount}. Исходные DOCX-файлы и настройки вида останутся.",
+            TextWrapping = TextWrapping.Wrap
+        };
+        var cancelButton = new Button
+        {
+            Content = "Отмена",
+            Classes = { "secondary", "compact" }
+        };
+        var clearButton = new Button
+        {
+            Content = "Очистить",
+            Classes = { "destructive", "compact" }
+        };
+
+        cancelButton.Click += (_, _) => dialog.Close(false);
+        clearButton.Click += (_, _) => dialog.Close(true);
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Spacing = 8,
+            Children = { cancelButton, clearButton }
+        };
+        var content = new Grid
+        {
+            Margin = new Avalonia.Thickness(20),
+            RowDefinitions = new RowDefinitions("Auto,*,Auto"),
+            RowSpacing = 12,
+            Children =
+            {
+                title,
+                message,
+                buttons
+            }
+        };
+        Grid.SetRow(message, 1);
+        Grid.SetRow(buttons, 2);
+        dialog.Content = content;
+
+        var result = await dialog.ShowDialog<bool?>(this);
+        return result == true;
     }
 }

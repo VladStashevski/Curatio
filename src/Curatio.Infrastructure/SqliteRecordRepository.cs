@@ -134,6 +134,26 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
         await transaction.CommitAsync(cancellationToken);
     }
 
+    public async Task<int> DeleteAllAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        var delete = connection.CreateCommand();
+        delete.Transaction = (SqliteTransaction)transaction;
+        delete.CommandText = "DELETE FROM records;";
+        var deleted = await delete.ExecuteNonQueryAsync(cancellationToken);
+
+        var resetIdentity = connection.CreateCommand();
+        resetIdentity.Transaction = (SqliteTransaction)transaction;
+        resetIdentity.CommandText = "DELETE FROM sqlite_sequence WHERE name = 'records';";
+        await resetIdentity.ExecuteNonQueryAsync(cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+        return deleted;
+    }
+
     public async Task SaveAsync(InsuranceRecord record, CancellationToken cancellationToken)
     {
         await using var connection = new SqliteConnection(_connectionString);

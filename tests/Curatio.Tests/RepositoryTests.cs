@@ -62,4 +62,33 @@ public sealed class RepositoryTests
 
         Assert.Equal("/synthetic/documents", await repository.GetAsync("lastFolder"));
     }
+
+    [Fact]
+    public async Task DeleteAllRemovesRecordsAndKeepsSettings()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"curatio-clear-{Guid.NewGuid():N}");
+        var repository = new SqliteRecordRepository(Path.Combine(directory, "test.db"));
+        await repository.InitializeAsync();
+        var modified = DateTime.UtcNow;
+        var path = Path.Combine(directory, "sample.docx");
+        var record = new InsuranceRecord
+        {
+            SourceFileName = "sample.docx",
+            FullPath = path,
+            FileSize = 42,
+            FileModifiedAt = modified,
+            ProcessedAt = DateTime.UtcNow,
+            Status = DocumentStatus.Processed
+        };
+
+        await repository.SaveAsync(record, CancellationToken.None);
+        await repository.SetAsync("lastFolder", "/synthetic/documents");
+
+        var deleted = await repository.DeleteAllAsync(CancellationToken.None);
+
+        Assert.Equal(1, deleted);
+        Assert.Empty(await repository.GetAllAsync());
+        Assert.False(await repository.IsImportedAsync(path, 42, modified, CancellationToken.None));
+        Assert.Equal("/synthetic/documents", await repository.GetAsync("lastFolder"));
+    }
 }

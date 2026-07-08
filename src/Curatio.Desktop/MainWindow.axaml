@@ -57,6 +57,10 @@
             <Button Classes="primary compact"
                     Command="{Binding ScanCommand}"
                     Content="Анализировать" />
+            <Button Classes="secondary compact"
+                    Command="{Binding ClearRecordsCommand}"
+                    Content="Очистить"
+                    ToolTip.Tip="Удалить все извлечённые записи из локальной базы" />
             <Button Classes="secondary compact" Content="Вид">
               <Button.Flyout>
                 <Flyout Placement="BottomEdgeAlignedRight">

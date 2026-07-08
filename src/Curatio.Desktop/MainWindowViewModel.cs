@@ -34,6 +34,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         ScanCommand = new AsyncCommand(ScanAsync, () => !IsBusy && Directory.Exists(SelectedFolder));
         ExportXlsxCommand = new AsyncCommand(() => RunSafeAsync(() => ExportAsync("xlsx")), CanExport);
         ExportCsvCommand = new AsyncCommand(() => RunSafeAsync(() => ExportAsync("csv")), CanExport);
+        ClearRecordsCommand = new AsyncCommand(ClearRecordsAsync, CanClearRecords);
         ResetViewCommand = new RelayCommand(ResetView);
 
         TableColumns =
@@ -79,11 +80,13 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public Func<Task<string?>>? PickFolderAsync { get; set; }
     public Func<string, Task<string?>>? PickExportPathAsync { get; set; }
+    public Func<int, Task<bool>>? ConfirmClearRecordsAsync { get; set; }
 
     public AsyncCommand ChooseFolderCommand { get; }
     public AsyncCommand ScanCommand { get; }
     public AsyncCommand ExportXlsxCommand { get; }
     public AsyncCommand ExportCsvCommand { get; }
+    public AsyncCommand ClearRecordsCommand { get; }
     public RelayCommand ResetViewCommand { get; }
 
     public string SelectedFolder
@@ -129,6 +132,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             ScanCommand.RaiseCanExecuteChanged();
             ExportXlsxCommand.RaiseCanExecuteChanged();
             ExportCsvCommand.RaiseCanExecuteChanged();
+            ClearRecordsCommand.RaiseCanExecuteChanged();
         }
     }
 
@@ -255,6 +259,8 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private bool CanExport() => !IsBusy && _allRecords.Any(record => record.Status == DocumentStatus.Processed);
 
+    private bool CanClearRecords() => !IsBusy && _allRecords.Count > 0;
+
     private async Task ExportAsync(string extension)
     {
         if (PickExportPathAsync is null)
@@ -273,6 +279,43 @@ public sealed class MainWindowViewModel : ViewModelBase
         Notification = $"Экспортировано записей: {records.Length}.";
     }
 
+    private async Task ClearRecordsAsync()
+    {
+        var recordCount = _allRecords.Count;
+        if (recordCount == 0)
+        {
+            Notification = "Нет извлечённых записей для очистки.";
+            return;
+        }
+
+        if (ConfirmClearRecordsAsync is not null && !await ConfirmClearRecordsAsync(recordCount))
+            return;
+
+        IsBusy = true;
+        ProgressText = "Очищаю извлечённые записи...";
+
+        try
+        {
+            var deleted = await _repository.DeleteAllAsync(CancellationToken.None);
+            _allRecords.Clear();
+            SelectedRecord = null;
+            RefreshRecords();
+            Notification = deleted == 0
+                ? "Нет извлечённых записей для очистки."
+                : $"Очищено извлечённых записей: {deleted}.";
+        }
+        catch (Exception)
+        {
+            Notification = "Не удалось очистить извлечённые записи.";
+            Logs.Insert(0, new ProcessingLog(DateTime.Now, "", "Ошибка очистки локальной базы."));
+        }
+        finally
+        {
+            ProgressText = "Готово к работе";
+            IsBusy = false;
+        }
+    }
+
     private void RefreshRecords()
     {
         Records.Clear();
@@ -281,6 +324,7 @@ public sealed class MainWindowViewModel : ViewModelBase
 
         ExportXlsxCommand.RaiseCanExecuteChanged();
         ExportCsvCommand.RaiseCanExecuteChanged();
+        ClearRecordsCommand.RaiseCanExecuteChanged();
     }
 
     private TableColumnPreference CreateColumn(string key, string title, bool isVisible = true) =>

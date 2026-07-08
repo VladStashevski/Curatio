@@ -16,6 +16,7 @@ public interface IRecordRepository
     Task InitializeAsync(CancellationToken cancellationToken = default);
     Task<bool> IsImportedAsync(string path, long size, DateTime modifiedAt, CancellationToken cancellationToken);
     Task DeleteByPathsAsync(IEnumerable<string> paths, CancellationToken cancellationToken);
+    Task<int> DeleteAllAsync(CancellationToken cancellationToken);
     Task SaveAsync(InsuranceRecord record, CancellationToken cancellationToken);
     Task UpdateAsync(InsuranceRecord record, CancellationToken cancellationToken);
     Task<IReadOnlyList<InsuranceRecord>> GetAllAsync(CancellationToken cancellationToken = default);

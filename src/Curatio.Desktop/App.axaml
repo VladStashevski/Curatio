@@ -157,6 +157,22 @@
       <Setter Property="BorderBrush" Value="{StaticResource BrushBorder}" />
     </Style>
 
+    <!-- Destructive -->
+    <Style Selector="Button.destructive">
+      <Setter Property="Background" Value="{StaticResource BrushDestructive}" />
+      <Setter Property="Foreground" Value="{StaticResource BrushPrimaryForeground}" />
+      <Setter Property="BorderBrush" Value="{StaticResource BrushDestructive}" />
+    </Style>
+    <Style Selector="Button.destructive:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#B91C1C" />
+      <Setter Property="BorderBrush" Value="#B91C1C" />
+      <Setter Property="TextElement.Foreground" Value="{StaticResource BrushPrimaryForeground}" />
+    </Style>
+    <Style Selector="Button.destructive:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#991B1B" />
+      <Setter Property="BorderBrush" Value="#991B1B" />
+    </Style>
+
     <!-- Ghost -->
     <Style Selector="Button.ghost">
       <Setter Property="Background" Value="Transparent" />
