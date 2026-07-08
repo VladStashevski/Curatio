@@ -52,6 +52,8 @@ public sealed class MainWindowViewModel : ViewModelBase
             CreateColumn("comorbidDiagnosis", "Сопутствующие диагнозы", false),
             CreateColumn("operation", "Операция", false),
             CreateColumn("clinicalStatisticalGroup", "КСГ", false),
+            CreateColumn("defectCode", "Код дефекта"),
+            CreateColumn("defect", "Дефект"),
             CreateColumn("description", "Выводы"),
             CreateColumn("file", "Файл"),
             CreateColumn("status", "Статус"),
@@ -154,10 +156,10 @@ public sealed class MainWindowViewModel : ViewModelBase
             }
 
             var viewVersion = await _settings.GetAsync("viewVersion");
-            if (viewVersion != "4")
+            if (viewVersion != "5")
             {
                 ApplyDefaultColumnVisibility();
-                await _settings.SetAsync("viewVersion", "4");
+                await _settings.SetAsync("viewVersion", "5");
             }
 
             foreach (var column in TableColumns)
@@ -349,7 +351,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             var isVisible = column.Key is
                 "claim" or "date" or "policy" or "medicalDocument" or "expert"
                 or "expertSpecialty" or "careForm" or "carePeriod" or "diagnosis"
-                or "description" or "checkType" or "amount" or "file" or "status";
+                or "defectCode" or "defect" or "description" or "checkType" or "amount" or "file" or "status";
             column.SetWithoutNotification(isVisible);
             _ = SaveViewSettingAsync($"column.{column.Key}.visible", isVisible.ToString());
         }

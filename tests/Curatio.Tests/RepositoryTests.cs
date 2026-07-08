@@ -28,7 +28,9 @@ public sealed class RepositoryTests
             DiagnosisComplication = "H65.0",
             ComorbidDiagnosis = "D64.9",
             Operation = "-",
-            ClinicalStatisticalGroup = "st12.012"
+            ClinicalStatisticalGroup = "st12.012",
+            DefectCode = "3.11",
+            DefectDescription = "В представленной ПМД отсутствует лист врачебных назначений"
         };
 
         await repository.SaveAsync(record, CancellationToken.None);
@@ -43,6 +45,8 @@ public sealed class RepositoryTests
         Assert.Equal("H65.0", loaded.DiagnosisComplication);
         Assert.Equal("D64.9", loaded.ComorbidDiagnosis);
         Assert.Equal("st12.012", loaded.ClinicalStatisticalGroup);
+        Assert.Equal("3.11", loaded.DefectCode);
+        Assert.Contains("лист врачебных назначений", loaded.DefectDescription);
 
         record.ExpertName = "Обновлённый Эксперт";
         await repository.SaveAsync(record, CancellationToken.None);

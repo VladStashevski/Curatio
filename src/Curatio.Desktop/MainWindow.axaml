@@ -186,6 +186,15 @@
                                   CellTheme="{StaticResource CenteredDataGridCell}"
                                   Binding="{ReflectionBinding ClinicalStatisticalGroup, Mode=TwoWay}"
                                   Width="340" />
+              <DataGridTextColumn Header="Код дефекта"
+                                  Tag="defectCode"
+                                  CellTheme="{StaticResource CenteredDataGridCell}"
+                                  Binding="{ReflectionBinding DefectCode, Mode=TwoWay}"
+                                  Width="125" />
+              <DataGridTextColumn Header="Дефект"
+                                  Tag="defect"
+                                  Binding="{ReflectionBinding DefectDescription, Mode=TwoWay}"
+                                  Width="420" />
               <DataGridTextColumn Header="Выводы"
                                   Tag="description"
                                   Binding="{ReflectionBinding EventDescription, Mode=TwoWay}"

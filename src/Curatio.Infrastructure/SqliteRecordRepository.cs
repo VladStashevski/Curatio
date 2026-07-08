@@ -5,7 +5,7 @@ namespace Curatio.Infrastructure;
 
 public sealed class SqliteRecordRepository(string databasePath) : IRecordRepository, ISettingsStore
 {
-    private const int CurrentExtractionVersion = 5;
+    private const int CurrentExtractionVersion = 6;
 
     private readonly string _connectionString = new SqliteConnectionStringBuilder
     {
@@ -56,6 +56,8 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
                 comorbid_diagnosis TEXT NOT NULL DEFAULT '',
                 operation TEXT NOT NULL DEFAULT '',
                 clinical_statistical_group TEXT NOT NULL DEFAULT '',
+                defect_code TEXT NOT NULL DEFAULT '',
+                defect_description TEXT NOT NULL DEFAULT '',
                 recommendations TEXT NOT NULL DEFAULT '',
                 source_file_name TEXT NOT NULL,
                 full_path TEXT NOT NULL,
@@ -169,7 +171,7 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
                 medical_organization, examination_form, examination_period, care_form,
                 care_conditions, care_profile, care_period, case_outcome, primary_diagnosis,
                 diagnosis_complication, comorbid_diagnosis, operation,
-                clinical_statistical_group, recommendations, source_file_name, full_path, case_key, file_size,
+                clinical_statistical_group, defect_code, defect_description, recommendations, source_file_name, full_path, case_key, file_size,
                 file_modified_at, processed_at, status, error_message, external_id,
                 send_status, sent_at, api_error_message, extraction_version
             ) VALUES (
@@ -180,7 +182,7 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
                 $medicalOrganization, $examinationForm, $examinationPeriod, $careForm,
                 $careConditions, $careProfile, $carePeriod, $caseOutcome, $primaryDiagnosis,
                 $diagnosisComplication, $comorbidDiagnosis, $operation,
-                $clinicalStatisticalGroup, $recommendations, $fileName, $path, $caseKey, $fileSize,
+                $clinicalStatisticalGroup, $defectCode, $defectDescription, $recommendations, $fileName, $path, $caseKey, $fileSize,
                 $modified, $processed, $status, $error, $externalId,
                 $sendStatus, $sentAt, $apiError, $extractionVersion
             )
@@ -215,6 +217,8 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
                 comorbid_diagnosis = excluded.comorbid_diagnosis,
                 operation = excluded.operation,
                 clinical_statistical_group = excluded.clinical_statistical_group,
+                defect_code = excluded.defect_code,
+                defect_description = excluded.defect_description,
                 recommendations = excluded.recommendations,
                 processed_at = excluded.processed_at,
                 status = excluded.status,
@@ -265,6 +269,8 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
                 comorbid_diagnosis = $comorbidDiagnosis,
                 operation = $operation,
                 clinical_statistical_group = $clinicalStatisticalGroup,
+                defect_code = $defectCode,
+                defect_description = $defectDescription,
                 recommendations = $recommendations,
                 status = $status,
                 error_message = $error,
@@ -350,6 +356,8 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
         command.Parameters.AddWithValue("$comorbidDiagnosis", record.ComorbidDiagnosis);
         command.Parameters.AddWithValue("$operation", record.Operation);
         command.Parameters.AddWithValue("$clinicalStatisticalGroup", record.ClinicalStatisticalGroup);
+        command.Parameters.AddWithValue("$defectCode", record.DefectCode);
+        command.Parameters.AddWithValue("$defectDescription", record.DefectDescription);
         command.Parameters.AddWithValue("$recommendations", record.Recommendations);
         command.Parameters.AddWithValue("$fileName", record.SourceFileName);
         command.Parameters.AddWithValue("$path", record.FullPath);
@@ -406,6 +414,8 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
         ComorbidDiagnosis = reader.GetString(reader.GetOrdinal("comorbid_diagnosis")),
         Operation = reader.GetString(reader.GetOrdinal("operation")),
         ClinicalStatisticalGroup = reader.GetString(reader.GetOrdinal("clinical_statistical_group")),
+        DefectCode = reader.GetString(reader.GetOrdinal("defect_code")),
+        DefectDescription = reader.GetString(reader.GetOrdinal("defect_description")),
         Recommendations = reader.GetString(reader.GetOrdinal("recommendations")),
         SourceFileName = reader.GetString(reader.GetOrdinal("source_file_name")),
         FullPath = reader.GetString(reader.GetOrdinal("full_path")),
@@ -492,6 +502,8 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
             ["comorbid_diagnosis"] = "TEXT NOT NULL DEFAULT ''",
             ["operation"] = "TEXT NOT NULL DEFAULT ''",
             ["clinical_statistical_group"] = "TEXT NOT NULL DEFAULT ''",
+            ["defect_code"] = "TEXT NOT NULL DEFAULT ''",
+            ["defect_description"] = "TEXT NOT NULL DEFAULT ''",
             ["recommendations"] = "TEXT NOT NULL DEFAULT ''",
             ["case_key"] = "TEXT NOT NULL DEFAULT ''",
             ["extraction_version"] = "INTEGER NOT NULL DEFAULT 0"

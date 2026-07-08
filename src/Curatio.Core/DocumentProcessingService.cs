@@ -139,6 +139,8 @@ public sealed class DocumentProcessingService(
         Fill(ref target, source, static record => record.ComorbidDiagnosis, static (record, value) => record.ComorbidDiagnosis = value);
         Fill(ref target, source, static record => record.Operation, static (record, value) => record.Operation = value);
         Fill(ref target, source, static record => record.ClinicalStatisticalGroup, static (record, value) => record.ClinicalStatisticalGroup = value);
+        Fill(ref target, source, static record => record.DefectCode, static (record, value) => record.DefectCode = value);
+        Fill(ref target, source, static record => record.DefectDescription, static (record, value) => record.DefectDescription = value);
         Fill(ref target, source, static record => record.Recommendations, static (record, value) => record.Recommendations = value);
 
         target.EventDate ??= source.EventDate;

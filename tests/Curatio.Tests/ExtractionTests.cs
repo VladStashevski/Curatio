@@ -146,6 +146,72 @@ public sealed class ExtractionTests
     }
 
     [Fact]
+    public void ExtractsDefectCodeAndDetailedDescriptionFromExpertiseProtocol()
+    {
+        var text =
+            """
+            Заключение по результатам экспертизы качества медицинской помощи от 02.07.2026 г. № 810126010013Э
+            Номер полиса обязательного медицинского страхования:
+            8152420840000474
+            Медицинская документация №
+            12648
+            __CURATIO_TABLE_ROW__	3) оказание медицинской помощи, в том числе назначение лекарственных препаратов и (или) медицинских изделий):
+            __CURATIO_TABLE_ROW__	В представленной ПМД отсутствует лист врачебных назначений с ранибизумабом. Код дефекта 3.11
+            __CURATIO_TABLE_ROW__	4) преемственность (обоснованность перевода, содержание рекомендаций):
+            __CURATIO_TABLE_ROW__	II. Выводы:
+            __CURATIO_TABLE_ROW__	Код дефекта 3.11 - Отсутствие в медицинской документации результатов обследований, осмотров, консультаций специалистов.
+            __CURATIO_TABLE_ROW__	III. Рекомендации:
+            """;
+
+        var record = _extractor.Extract(
+            text,
+            "810077_81008_ЭЗ_ЭКМП_26-07_810126010013Э_ПД_3.11._87.docx",
+            100,
+            DateTime.UtcNow);
+
+        Assert.Equal("3.11", record.DefectCode);
+        Assert.Equal(
+            "В представленной ПМД отсутствует лист врачебных назначений с ранибизумабом",
+            record.DefectDescription);
+        Assert.Contains("Отсутствие в медицинской документации", record.EventDescription);
+    }
+
+    [Fact]
+    public void IgnoresSummaryFootnoteNumberAsDefectDescription()
+    {
+        var text =
+            """
+            Заключение по результатам экспертизы качества медицинской помощи от 02.07.2026 г. № 810126010013Э
+            __CURATIO_TABLE_ROW__	1		офтальмологии	8152420840000474	09.07.1975	12648	H35.3	19.11.2025	20.11.2025	56 878.54	3.11.	1	НЕТ	28 439.27	28 439.27	0.00
+            """;
+
+        var record = Assert.Single(_extractor.ExtractRecords(text, "summary.docx", 100, DateTime.UtcNow));
+
+        Assert.Equal("3.11", record.DefectCode);
+        Assert.Empty(record.DefectDescription);
+    }
+
+    [Fact]
+    public void DoesNotUseConclusionDateAsDefectCode()
+    {
+        var record = _extractor.Extract(
+            """
+            Заключение по результатам экспертизы качества медицинской помощи от 02.07.2026 г. № 810134800009Э
+            Номер полиса обязательного медицинского страхования:
+            8191479747000212
+            Медицинская документация №
+            12648
+            Нарушения, соответствующие разделам 2, 3 Перечня оснований для отказа в оплате медицинской помощи, не выявлены.
+            """,
+            "810077_81008_Заключение_ЭКМП_07.2026_810134800009Э_ВБД_82.docx",
+            100,
+            DateTime.UtcNow);
+
+        Assert.Empty(record.DefectCode);
+        Assert.Empty(record.DefectDescription);
+    }
+
+    [Fact]
     public void DetectsEconomicCheckType()
     {
         var record = _extractor.Extract(

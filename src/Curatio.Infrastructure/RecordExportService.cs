@@ -15,7 +15,7 @@ public sealed class RecordExportService : IRecordExportService
         "Форма экспертизы", "Вид проверки", "Срок экспертизы", "Форма помощи", "Условия помощи",
         "Профиль помощи", "Период помощи", "Исход случая", "Основной диагноз",
         "Осложнение диагноза", "Сопутствующие диагнозы", "Операция", "КСГ",
-        "Выводы", "Рекомендации", "Сумма случая", "Финансовые санкции",
+        "Код дефекта", "Дефект", "Выводы", "Рекомендации", "Сумма случая", "Финансовые санкции",
         "Неоплата/уменьшение", "Штраф", "Исходный файл",
         "Полный путь", "Дата обработки", "Статус"
     ];
@@ -87,6 +87,8 @@ public sealed class RecordExportService : IRecordExportService
         record.ComorbidDiagnosis,
         record.Operation,
         record.ClinicalStatisticalGroup,
+        record.DefectCode,
+        record.DefectDescription,
         record.EventDescription,
         record.Recommendations,
         record.InsuredAmount ?? (object)"",

@@ -53,6 +53,8 @@ public sealed partial class InsuranceRecord : INotifyPropertyChanged
     private string _comorbidDiagnosis = "";
     private string _operation = "";
     private string _clinicalStatisticalGroup = "";
+    private string _defectCode = "";
+    private string _defectDescription = "";
     private string _recommendations = "";
     private DocumentStatus _status;
     private string? _errorMessage;
@@ -88,6 +90,8 @@ public sealed partial class InsuranceRecord : INotifyPropertyChanged
     public string ComorbidDiagnosis { get => _comorbidDiagnosis; set => SetField(ref _comorbidDiagnosis, value); }
     public string Operation { get => _operation; set => SetField(ref _operation, value); }
     public string ClinicalStatisticalGroup { get => _clinicalStatisticalGroup; set => SetField(ref _clinicalStatisticalGroup, value); }
+    public string DefectCode { get => _defectCode; set => SetField(ref _defectCode, value); }
+    public string DefectDescription { get => _defectDescription; set => SetField(ref _defectDescription, value); }
     public string Recommendations { get => _recommendations; set => SetField(ref _recommendations, value); }
     public string SourceFileName { get; set; } = "";
     public string FullPath { get; set; } = "";
