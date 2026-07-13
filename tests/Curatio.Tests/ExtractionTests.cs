@@ -191,6 +191,118 @@ public sealed class ExtractionTests
         Assert.Empty(record.DefectDescription);
     }
 
+    [Theory]
+    [InlineData("см.сноску 1")]
+    [InlineData("см. сноску № 2")]
+    [InlineData("См. примечание 3")]
+    public void TreatsCrossReferenceAsMissingDefectDescription(string reference)
+    {
+        var text =
+            $"""
+            Заключение по результатам экспертизы качества медицинской помощи от 09.07.2026 г. № 810115190001Э
+            Номер полиса обязательного медицинского страхования:
+            8152820845000678
+            Медицинская документация №
+            5926
+            __CURATIO_TABLE_ROW__	1	онкологии	5926	3.8.	{reference}	70 471.05	5 609.16
+            """;
+
+        var record = _extractor.Extract(
+            text,
+            "810077_Заключение_ЭКМП_810115190001Э_ВД_3.8._82.docx",
+            100,
+            DateTime.UtcNow);
+
+        Assert.Equal("3.8", record.DefectCode);
+        Assert.Empty(record.DefectDescription);
+        Assert.DoesNotContain("сноск", record.EventDescription, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void UsesPreferredDefectCodeWhenProtocolContainsSeveralCodes()
+    {
+        var text =
+            """
+            1) сбор информации:
+            При поступлении УЗИ не выполнено. Код дефекта 3.2.1.
+            4) преемственность (обоснованность перевода, содержание рекомендаций):
+            После установления диагноза пациент не переведен в профильное отделение. Код дефекта: 3.7. Нарушены требования к профильности оказанной медицинской помощи.
+            II. Выводы:
+            Выявлены нарушения по кодам 3.2.1 и 3.7.
+            """;
+
+        var record = _extractor.Extract(
+            text,
+            "810077_ЭЗ_ЭКМП_810114330001Э_ВД_3.7._72.docx",
+            100,
+            DateTime.UtcNow);
+
+        Assert.Equal("3.7", record.DefectCode);
+        Assert.Equal(
+            "Нарушены требования к профильности оказанной медицинской помощи",
+            record.DefectDescription);
+        Assert.DoesNotContain("УЗИ", record.DefectDescription, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ExtractsDescriptionAfterApplyDefectCodeInstruction()
+    {
+        var record = _extractor.Extract(
+            """
+            4) преемственность (обоснованность перевода, содержание рекомендаций):
+            Применить код дефекта 3.2.1.Невыполнение необходимых пациенту диагностических мероприятий не повлияло на состояние здоровья.
+            II. Выводы:
+            Медицинская помощь оказана ненадлежаще.
+            """,
+            "810077_ЭЗ_ЭКМП_810146310001Э_ВД_3.2.1._77.docx",
+            100,
+            DateTime.UtcNow);
+
+        Assert.Equal("3.2.1", record.DefectCode);
+        Assert.StartsWith("Невыполнение необходимых", record.DefectDescription);
+        Assert.NotEqual("Применить", record.DefectDescription);
+    }
+
+    [Fact]
+    public void ReadsDefectCodeOnNextLineAndDescriptionFromPreviousLine()
+    {
+        var record = _extractor.Extract(
+            """
+            4) преемственность (обоснованность перевода, содержание рекомендаций):
+            Госпитализация не обоснована, помощь могла быть оказана амбулаторно.
+            Код дефекта:
+            3.8.
+            II. Выводы:
+            Медицинская помощь оказана ненадлежаще.
+            """,
+            "protocol.docx",
+            100,
+            DateTime.UtcNow);
+
+        Assert.Equal("3.8", record.DefectCode);
+        Assert.Equal(
+            "Госпитализация не обоснована, помощь могла быть оказана амбулаторно",
+            record.DefectDescription);
+    }
+
+    [Fact]
+    public void ExplicitNoDefectsPreventsCodeFallbackFromFileName()
+    {
+        var record = _extractor.Extract(
+            """
+            1) сбор информации:
+            Дефектов оказания медицинской помощи не выявлено.
+            II. Выводы:
+            Дефектов оказания медицинской помощи не выявлено.
+            """,
+            "810077_ЭЗ_ЭКМП_810115190001Э_ВД_3.8._82.docx",
+            100,
+            DateTime.UtcNow);
+
+        Assert.Empty(record.DefectCode);
+        Assert.Empty(record.DefectDescription);
+    }
+
     [Fact]
     public void DoesNotUseConclusionDateAsDefectCode()
     {
@@ -232,5 +344,20 @@ public sealed class ExtractionTests
             DateTime.UtcNow);
 
         Assert.Equal("Экономическая", record.CheckType);
+    }
+
+    [Fact]
+    public void FileNameCheckTypeOverridesLegalReferencesInsideProtocol()
+    {
+        var record = _extractor.Extract(
+            """
+            Экспертное заключение по результатам экспертизы качества медицинской помощи.
+            В шаблонном тексте также упоминается проведение медико-экономической экспертизы.
+            """,
+            "810077_ЭЗ_ЭКМП_810115190001Э_ВД_3.8._82.docx",
+            100,
+            DateTime.UtcNow);
+
+        Assert.Equal("Экспертная", record.CheckType);
     }
 }

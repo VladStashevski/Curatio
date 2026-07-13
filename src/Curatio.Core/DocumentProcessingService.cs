@@ -120,6 +120,8 @@ public sealed class DocumentProcessingService(
         Fill(ref target, source, static record => record.ClaimType, static (record, value) => record.ClaimType = value);
         Fill(ref target, source, static record => record.CheckType, static (record, value) => record.CheckType = value);
         Fill(ref target, source, static record => record.PolicyNumber, static (record, value) => record.PolicyNumber = value);
+        if (IsReferenceOnly(target.EventDescription))
+            target.EventDescription = "";
         Fill(ref target, source, static record => record.EventDescription, static (record, value) => record.EventDescription = value);
         Fill(ref target, source, static record => record.InsuranceOrganization, static (record, value) => record.InsuranceOrganization = value);
         Fill(ref target, source, static record => record.ExpertName, static (record, value) => record.ExpertName = value);
@@ -139,8 +141,7 @@ public sealed class DocumentProcessingService(
         Fill(ref target, source, static record => record.ComorbidDiagnosis, static (record, value) => record.ComorbidDiagnosis = value);
         Fill(ref target, source, static record => record.Operation, static (record, value) => record.Operation = value);
         Fill(ref target, source, static record => record.ClinicalStatisticalGroup, static (record, value) => record.ClinicalStatisticalGroup = value);
-        Fill(ref target, source, static record => record.DefectCode, static (record, value) => record.DefectCode = value);
-        Fill(ref target, source, static record => record.DefectDescription, static (record, value) => record.DefectDescription = value);
+        MergeDefectDetails(target, source);
         Fill(ref target, source, static record => record.Recommendations, static (record, value) => record.Recommendations = value);
 
         target.EventDate ??= source.EventDate;
@@ -161,6 +162,65 @@ public sealed class DocumentProcessingService(
     {
         if (string.IsNullOrWhiteSpace(get(target)) && !string.IsNullOrWhiteSpace(get(source)))
             set(target, get(source));
+    }
+
+    private static void MergeDefectDetails(InsuranceRecord target, InsuranceRecord source)
+    {
+        if (IsReferenceOnly(target.DefectDescription))
+            target.DefectDescription = "";
+
+        var targetCode = NormalizeDefectCode(target.DefectCode);
+        var sourceCode = NormalizeDefectCode(source.DefectCode);
+        if (string.IsNullOrWhiteSpace(targetCode))
+        {
+            if (string.IsNullOrWhiteSpace(sourceCode))
+                return;
+
+            target.DefectCode = source.DefectCode;
+            if (!IsReferenceOnly(source.DefectDescription))
+                target.DefectDescription = source.DefectDescription;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(sourceCode)
+            || !targetCode.Equals(sourceCode, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(target.DefectDescription)
+            && !IsReferenceOnly(source.DefectDescription))
+        {
+            target.DefectDescription = source.DefectDescription;
+        }
+    }
+
+    private static string NormalizeDefectCode(string value)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(
+            value,
+            @"\d+(?:\.\d+)+",
+            System.Text.RegularExpressions.RegexOptions.None,
+            TimeSpan.FromSeconds(1));
+        return match.Success ? match.Value : "";
+    }
+
+    private static bool IsReferenceOnly(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return true;
+
+        var normalized = Normalize(value);
+        return System.Text.RegularExpressions.Regex.IsMatch(
+                   normalized,
+                   @"^(?:см\.?\s*)?(?:сноск\w*|примечани\w*|пояснени\w*)(?:\s*(?:№|N)?\s*[\d.,;()\s\-–—]+)?\.?$",
+                   System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+                   TimeSpan.FromSeconds(1))
+            || System.Text.RegularExpressions.Regex.IsMatch(
+                normalized,
+                @"^см\.?\s*(?:ниже|выше|в\s+приложени\w*)(?:\s*№?\s*\d+)?\.?$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+                TimeSpan.FromSeconds(1));
     }
 
     private static string MergeKey(InsuranceRecord record)

@@ -6,6 +6,10 @@ namespace Curatio.Core;
 public sealed class RegexInsuranceDataExtractor(ExtractionRuleSet rules) : IInsuranceDataExtractor
 {
     private static readonly CultureInfo RussianCulture = CultureInfo.GetCultureInfo("ru-RU");
+    private const string DefectCodeLabelPattern =
+        @"(?:(?:код(?:ом)?(?:\(-ами\))?|коды?)\s+)?(?:нарушения\s*\(\s*)?дефект(?:а(?:\(-ов\))?|ов|\(-ов\))\)?\s*[:№\-–—]?\s*(?<code>\d+(?:\.\d+)+)";
+    private const string DefectLabelWithoutCodePattern =
+        @"(?:(?:код(?:ом)?(?:\(-ами\))?|коды?)\s+)?(?:нарушения\s*\(\s*)?дефект(?:а(?:\(-ов\))?|ов|\(-ов\))\)?\s*[:№\-–—]?\s*$";
 
     public InsuranceRecord Extract(string text, string path, long size, DateTime modifiedAt) =>
         ExtractRecords(text, path, size, modifiedAt).FirstOrDefault()
@@ -104,8 +108,14 @@ public sealed class RegexInsuranceDataExtractor(ExtractionRuleSet rules) : IInsu
         record.FinancialSanctionsAmount = row.FinancialSanctionsAmount;
         record.PaymentReductionAmount = row.PaymentReductionAmount;
         record.PenaltyAmount = row.PenaltyAmount;
-        record.DefectCode = NormalizeDefectCode(row.DefectCode);
-        record.DefectDescription = NormalizeDefectDescription(row.DefectDescription);
+        var rowDefectCode = NormalizeDefectCode(row.DefectCode);
+        var rowDefectDescription = NormalizeDefectDescription(row.DefectDescription);
+        record.DefectCode = rowDefectCode;
+        record.DefectDescription = !string.IsNullOrWhiteSpace(rowDefectDescription)
+            ? rowDefectDescription
+            : SameDefectCode(baseRecord.DefectCode, rowDefectCode)
+                ? baseRecord.DefectDescription
+                : "";
 
         if (!string.IsNullOrWhiteSpace(record.DefectDescription))
         {
@@ -214,13 +224,26 @@ public sealed class RegexInsuranceDataExtractor(ExtractionRuleSet rules) : IInsu
                 continue;
 
             var penalty = ParseAmountOrNull(row[6]);
+            var defectCode = NormalizeDefectCode(row[3]);
+            var defectDescription = NormalizeDefectDescription(row[4]);
+
             record.PaymentReductionAmount = paymentReduction;
             record.PenaltyAmount = penalty;
             record.FinancialSanctionsAmount = paymentReduction + (penalty ?? 0m);
-            if (string.IsNullOrWhiteSpace(record.DefectCode))
-                record.DefectCode = NormalizeDefectCode(row[3]);
-            if (string.IsNullOrWhiteSpace(record.DefectDescription))
-                record.DefectDescription = NormalizeDefectDescription(row[4]);
+
+            if (!string.IsNullOrWhiteSpace(defectCode))
+            {
+                if (!SameDefectCode(record.DefectCode, defectCode)
+                    && string.IsNullOrWhiteSpace(defectDescription))
+                {
+                    record.DefectDescription = "";
+                }
+
+                record.DefectCode = defectCode;
+            }
+
+            if (!string.IsNullOrWhiteSpace(defectDescription))
+                record.DefectDescription = defectDescription;
             if (string.IsNullOrWhiteSpace(record.EventDescription) && !string.IsNullOrWhiteSpace(record.DefectDescription))
                 record.EventDescription = record.DefectDescription;
             return;
@@ -249,23 +272,35 @@ public sealed class RegexInsuranceDataExtractor(ExtractionRuleSet rules) : IInsu
 
     private static string DetectCheckType(string text, string path)
     {
-        var source = $"{Path.GetFileName(path)}\n{text}";
-        if (source.Contains("МЭЭ", StringComparison.OrdinalIgnoreCase)
-            || source.Contains("медико-экономической экспертизы", StringComparison.OrdinalIgnoreCase)
-            || source.Contains("медико-экономическая экспертиза", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Экономическая";
-        }
-
-        if (source.Contains("ЭКМП", StringComparison.OrdinalIgnoreCase)
-            || source.Contains("экспертизы качества медицинской помощи", StringComparison.OrdinalIgnoreCase)
-            || source.Contains("экспертиза качества медицинской помощи", StringComparison.OrdinalIgnoreCase))
-        {
+        var fileName = Path.GetFileName(path);
+        if (fileName.Contains("ЭКМП", StringComparison.OrdinalIgnoreCase))
             return "Экспертная";
-        }
+        if (fileName.Contains("МЭЭ", StringComparison.OrdinalIgnoreCase))
+            return "Экономическая";
+
+        var qualityIndex = FirstIndexOf(
+            text,
+            "экспертизы качества медицинской помощи",
+            "экспертиза качества медицинской помощи");
+        var economicIndex = FirstIndexOf(
+            text,
+            "медико-экономической экспертизы",
+            "медико-экономическая экспертиза");
+
+        if (qualityIndex >= 0 && (economicIndex < 0 || qualityIndex < economicIndex))
+            return "Экспертная";
+        if (economicIndex >= 0)
+            return "Экономическая";
 
         return "";
     }
+
+    private static int FirstIndexOf(string source, params string[] values) =>
+        values
+            .Select(value => source.IndexOf(value, StringComparison.OrdinalIgnoreCase))
+            .Where(index => index >= 0)
+            .DefaultIfEmpty(-1)
+            .Min();
 
     private static string BuildCaseKey(InsuranceRecord record) =>
         BuildCaseKey(
@@ -333,55 +368,173 @@ public sealed class RegexInsuranceDataExtractor(ExtractionRuleSet rules) : IInsu
 
     private static DefectDetails ExtractDefectDetails(string text, string path)
     {
-        var lines = LogicalLines(text).ToArray();
-        var conclusionsIndex = Array.FindIndex(
-            lines,
-            line => Regex.IsMatch(line, @"^[IVX]+\.\s*Выводы", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1)));
-        var preferredLines = conclusionsIndex < 0
-            ? lines
-            : lines.Take(conclusionsIndex);
-
-        var details = ExtractDefectDetails(preferredLines);
-        if (!string.IsNullOrWhiteSpace(details.Code) || !string.IsNullOrWhiteSpace(details.Description))
-            return details;
-
-        details = ExtractDefectDetails(lines);
-        if (!string.IsNullOrWhiteSpace(details.Code) || !string.IsNullOrWhiteSpace(details.Description))
-            return details;
-
-        return new DefectDetails(ExtractDefectCodeFromFileName(path), "");
-    }
-
-    private static DefectDetails ExtractDefectDetails(IEnumerable<string> lines)
-    {
-        foreach (var line in lines)
+        var preferredCode = ExtractDefectCodeFromFileName(path);
+        var paragraphLines = LogicalLines(text, tableRows: false).ToArray();
+        var tableLines = LogicalLines(text, tableRows: true).ToArray();
+        var scopes = new[]
         {
-            if (IsNoDefectValue(line) || !line.Contains("дефект", StringComparison.OrdinalIgnoreCase))
+            BeforeConclusions(paragraphLines),
+            paragraphLines,
+            BeforeConclusions(tableLines),
+            tableLines
+        };
+
+        var codeOnlyDetails = new DefectDetails("", "");
+        foreach (var scope in scopes)
+        {
+            if (scope.Length == 0)
                 continue;
 
-            var match = Regex.Match(
-                line,
-                @"(?:код(?:ом)?(?:\(-ами\))?\s+)?дефекта(?:\(-ов\))?\s*:?\s*(?<code>\d+(?:\.\d+)+)",
-                RegexOptions.IgnoreCase,
-                TimeSpan.FromSeconds(1));
-            if (!match.Success)
-                continue;
-
-            var code = NormalizeDefectCode(match.Groups["code"].Value);
-            var before = NormalizeDefectDescription(line[..match.Index]);
-            var after = NormalizeDefectDescription(line[(match.Index + match.Length)..]);
-            var description = string.IsNullOrWhiteSpace(before) ? after : before;
-
-            if (!string.IsNullOrWhiteSpace(code) || !string.IsNullOrWhiteSpace(description))
-                return new DefectDetails(code, description);
+            var details = ExtractDefectDetails(scope, preferredCode);
+            if (!string.IsNullOrWhiteSpace(details.Description))
+                return details;
+            if (string.IsNullOrWhiteSpace(codeOnlyDetails.Code) && !string.IsNullOrWhiteSpace(details.Code))
+                codeOnlyDetails = details;
         }
 
-        return new DefectDetails("", "");
+        if (!string.IsNullOrWhiteSpace(codeOnlyDetails.Code))
+            return codeOnlyDetails;
+
+        var allLines = paragraphLines
+            .Concat(tableLines)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (ContainsExplicitNoDefectStatement(allLines))
+            return new DefectDetails("", "");
+
+        return new DefectDetails(preferredCode, "");
     }
 
-    private static IEnumerable<string> LogicalLines(string text) =>
+    private static DefectDetails ExtractDefectDetails(IReadOnlyList<string> lines, string preferredCode)
+    {
+        var candidates = new List<DefectDetails>();
+        for (var index = 0; index < lines.Count; index++)
+        {
+            var line = lines[index];
+            if (IsNoDefectValue(line))
+                continue;
+
+            var matches = Regex.Matches(
+                line,
+                DefectCodeLabelPattern,
+                RegexOptions.IgnoreCase,
+                TimeSpan.FromSeconds(1));
+            foreach (Match match in matches)
+            {
+                var code = NormalizeDefectCode(match.Groups["code"].Value);
+                if (string.IsNullOrWhiteSpace(code))
+                    continue;
+
+                candidates.Add(new DefectDetails(code, ExtractCandidateDescription(line, match)));
+            }
+
+            if (matches.Count > 0
+                || index + 1 >= lines.Count
+                || !Regex.IsMatch(
+                    line,
+                    DefectLabelWithoutCodePattern,
+                    RegexOptions.IgnoreCase,
+                    TimeSpan.FromSeconds(1))
+                || !LooksLikeStandaloneDefectCode(lines[index + 1]))
+            {
+                continue;
+            }
+
+            var splitCode = NormalizeDefectCode(lines[index + 1]);
+            var splitDescription = index > 0 && IsSubstantiveDescription(lines[index - 1])
+                ? NormalizeDefectDescription(lines[index - 1])
+                : "";
+            candidates.Add(new DefectDetails(splitCode, splitDescription));
+        }
+
+        var eligible = string.IsNullOrWhiteSpace(preferredCode)
+            ? candidates
+            : candidates
+                .Where(candidate => SameDefectCode(candidate.Code, preferredCode))
+                .ToList();
+        return eligible.FirstOrDefault(candidate => !string.IsNullOrWhiteSpace(candidate.Description))
+            ?? eligible.FirstOrDefault()
+            ?? new DefectDetails("", "");
+    }
+
+    private static string[] BeforeConclusions(string[] lines)
+    {
+        var conclusionsIndex = Array.FindIndex(
+            lines,
+            line => Regex.IsMatch(
+                line,
+                @"^(?:(?:[IVXLCDM]+|\d+)\s*[.)]?\s*)?Выводы\b",
+                RegexOptions.IgnoreCase,
+                TimeSpan.FromSeconds(1)));
+        return conclusionsIndex < 0 ? lines : lines.Take(conclusionsIndex).ToArray();
+    }
+
+    private static string ExtractCandidateDescription(string line, Match match)
+    {
+        var before = NormalizeDefectDescription(line[..match.Index]);
+        var after = NormalizeDefectDescription(line[(match.Index + match.Length)..]);
+
+        if (IsSubstantiveDescription(after) && !IsGenericConclusionDescription(after))
+            return after;
+        if (IsSubstantiveDescription(before))
+            return before;
+        return "";
+    }
+
+    private static bool IsSubstantiveDescription(string value)
+    {
+        var normalized = NormalizeDefectDescription(value);
+        if (normalized.Length < 8
+            || IsReferenceOnlyDescription(normalized)
+            || IsNoDefectValue(normalized)
+            || IsGenericConclusionDescription(normalized))
+        {
+            return false;
+        }
+
+        if (Regex.IsMatch(
+                normalized,
+                @"^(?:\d+(?:\.\d+)?\)\s*)?(?:сбор информации|диагноз|оказание медицинской помощи|преемственность|заключение)\b[^.]*:?$",
+                RegexOptions.IgnoreCase,
+                TimeSpan.FromSeconds(1)))
+        {
+            return false;
+        }
+
+        return normalized.Any(char.IsLetter);
+    }
+
+    private static bool IsGenericConclusionDescription(string value)
+    {
+        var normalized = NormalizeCell(value);
+        return Regex.IsMatch(
+                   normalized,
+                   @"^(?:применить|установить|выявлено|выявлены|код|дефект|нарушение)\.?$",
+                   RegexOptions.IgnoreCase,
+                   TimeSpan.FromSeconds(1))
+            || (normalized.StartsWith("Медицинская помощь оказана", StringComparison.OrdinalIgnoreCase)
+                && (normalized.Contains("квалифицируем", StringComparison.OrdinalIgnoreCase)
+                    || normalized.Contains("выявлено", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private static bool LooksLikeStandaloneDefectCode(string value) =>
+        Regex.IsMatch(
+            NormalizeCell(value),
+            @"^(?:код\s*)?[:№\-–—]?\s*\d+(?:\.\d+)+\.?$",
+            RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+
+    private static bool ContainsExplicitNoDefectStatement(IEnumerable<string> lines) =>
+        lines.Any(line => Regex.IsMatch(
+            line,
+            @"(?:дефект(?:ы|ов)?\b.{0,200}\bне\s+выявлен|нарушени(?:я|й)\b.{0,200}\bне\s+выявлен|дефект(?:ы|ов)?\s+отсутствуют|без\s+дефектов)",
+            RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1)));
+
+    private static IEnumerable<string> LogicalLines(string text, bool tableRows) =>
         text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => line.StartsWith(DocumentTextMarkers.TableRowPrefix, StringComparison.Ordinal)
+            .Where(line => line.StartsWith(DocumentTextMarkers.TableRowPrefix, StringComparison.Ordinal) == tableRows)
+            .Select(line => tableRows
                 ? line[DocumentTextMarkers.TableRowPrefix.Length..].Replace('\t', ' ')
                 : line)
             .Select(NormalizeCell)
@@ -409,7 +562,32 @@ public sealed class RegexInsuranceDataExtractor(ExtractionRuleSet rules) : IInsu
             RegexOptions.IgnoreCase,
             TimeSpan.FromSeconds(1)).Trim();
 
-        return IsNoDefectValue(normalized) ? "" : normalized;
+        return IsNoDefectValue(normalized) || IsReferenceOnlyDescription(normalized)
+            ? ""
+            : normalized;
+    }
+
+    private static bool SameDefectCode(string left, string right)
+    {
+        var normalizedLeft = NormalizeDefectCode(left);
+        var normalizedRight = NormalizeDefectCode(right);
+        return !string.IsNullOrWhiteSpace(normalizedLeft)
+            && normalizedLeft.Equals(normalizedRight, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsReferenceOnlyDescription(string value)
+    {
+        var normalized = NormalizeCell(value);
+        return Regex.IsMatch(
+                   normalized,
+                   @"^(?:см\.?\s*)?(?:сноск\w*|примечани\w*|пояснени\w*)(?:\s*(?:№|N)?\s*[\d.,;()\s\-–—]+)?\.?$",
+                   RegexOptions.IgnoreCase,
+                   TimeSpan.FromSeconds(1))
+            || Regex.IsMatch(
+                normalized,
+                @"^см\.?\s*(?:ниже|выше|в\s+приложени\w*)(?:\s*№?\s*\d+)?\.?$",
+                RegexOptions.IgnoreCase,
+                TimeSpan.FromSeconds(1));
     }
 
     private static string ExtractDefectCodeFromFileName(string path)
@@ -432,7 +610,12 @@ public sealed class RegexInsuranceDataExtractor(ExtractionRuleSet rules) : IInsu
             || normalized.Equals("Не выявлено", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("Замечаний нет", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("Информация отсутствует", StringComparison.OrdinalIgnoreCase)
-            || normalized.Contains("дефектов не выявлено", StringComparison.OrdinalIgnoreCase);
+            || normalized.Contains("дефектов не выявлено", StringComparison.OrdinalIgnoreCase)
+            || Regex.IsMatch(
+                normalized,
+                @"(?:дефект(?:ы|ов)?\b.{0,200}\bне\s+выявлен|дефект(?:ы|ов)?\s+отсутствуют|без\s+дефектов)",
+                RegexOptions.IgnoreCase,
+                TimeSpan.FromSeconds(1));
     }
 
     private static bool HasRequiredFields(InsuranceRecord record) =>
