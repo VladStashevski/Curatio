@@ -45,6 +45,14 @@ public sealed class CorpusGoldenTests
         Assert.Equal(544_686.78m, cases.Sum(record => record.FinancialSanctionsAmount ?? 0m));
         Assert.Equal(527_859.30m, cases.Sum(record => record.PaymentReductionAmount ?? 0m));
         Assert.Equal(16_827.48m, cases.Sum(record => record.PenaltyAmount ?? 0m));
+        var registries = result.Records
+            .Where(record => record.SourceDocumentType == "registry")
+            .ToArray();
+        Assert.Equal(29, registries.Length);
+        Assert.All(registries, record => Assert.NotNull(record.InsuredAmount));
+        Assert.Equal(
+            cases.Sum(record => record.InsuredAmount ?? 0m),
+            registries.Sum(record => record.InsuredAmount ?? 0m));
         Assert.DoesNotContain(cases, record => record.CaseOutcome.TrimEnd().EndsWith('|'));
         var contaminatedKsg = cases
             .Where(record => record.ClinicalStatisticalGroup.Contains("По случаю", StringComparison.OrdinalIgnoreCase)

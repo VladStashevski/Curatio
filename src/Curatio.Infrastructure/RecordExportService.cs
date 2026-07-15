@@ -121,7 +121,7 @@ public sealed class RecordExportService : IRecordExportService
         var payload = new
         {
             schemaVersion = 1,
-            parserVersion = "curatio-desktop-ooxml-v2",
+            parserVersion = "curatio-desktop-ooxml-v3",
             exportedAt = DateTime.UtcNow,
             records = records.Select(record => new
             {

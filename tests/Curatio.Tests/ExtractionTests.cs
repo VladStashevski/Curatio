@@ -131,6 +131,21 @@ public sealed class ExtractionTests
     }
 
     [Fact]
+    public void UsesExplicitKopecksFromRegistryInvoiceTotal()
+    {
+        var text =
+            """
+            Реестр заключений по результатам экспертизы качества медицинской помощи
+            Сумма по счету:
+            210 280.00 (двести десять тысяч двести восемьдесят) руб. 82 коп..
+            """;
+
+        var record = _extractor.Extract(text, "Реестр_81012449-1.docx", 100, DateTime.UtcNow);
+
+        Assert.Equal(210280.82m, record.InsuredAmount);
+    }
+
+    [Fact]
     public void ExtractsMultipleCasesFromSummaryTable()
     {
         var text =

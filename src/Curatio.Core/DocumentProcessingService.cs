@@ -112,7 +112,7 @@ public sealed class DocumentProcessingService(
                     record.SourceFileHash = hash;
                     record.SourceDocumentType = documentType;
                     record.SourceStructureJson = document.StructureJson;
-                    record.ParserVersion = "curatio-desktop-ooxml-v2";
+                    record.ParserVersion = "curatio-desktop-ooxml-v3";
                     record.ReconciliationStatus = "pending";
                     if (documentType is "registry" or "cover_letter")
                         record.Status = DocumentStatus.Unprocessed;
@@ -405,14 +405,14 @@ public sealed class DocumentProcessingService(
                 var normalizedValue = EvidenceValue(entry.Value!);
                 var location = FindEvidenceLocation(
                     record.SourceStructureJson,
-                    EvidenceSearchValues(entry.Value!));
+                    EvidenceSearchValues(entry.Name, entry.Value!));
                 return new
                 {
                     field = entry.Name,
                     rawValue = location?.RawText ?? normalizedValue,
                     normalizedValue,
                     locator = location?.Locator ?? "flattened-document-text",
-                    extractorRule = "curatio-regex-v7",
+                    extractorRule = "curatio-regex-v8",
                     parserVersion = record.ParserVersion,
                     confidence = location is null ? 0.65 : 0.85,
                     state = "extracted"
@@ -456,18 +456,18 @@ public sealed class DocumentProcessingService(
                 if (!part.TryGetProperty("tables", out var tables))
                     continue;
                 foreach (var table in tables.EnumerateArray())
-                foreach (var row in table.GetProperty("rows").EnumerateArray())
-                foreach (var cell in row.GetProperty("cells").EnumerateArray())
-                {
-                    var rawText = cell.GetProperty("text").GetString() ?? "";
-                    if (!ContainsEvidence(rawText, values))
-                        continue;
-                    return new EvidenceLocation(
-                        $"ooxml:{partName}/table:{table.GetProperty("tableIndex").GetInt32()}"
-                        + $"/row:{row.GetProperty("rowIndex").GetInt32()}"
-                        + $"/cell:{cell.GetProperty("cellIndex").GetInt32()}",
-                        rawText);
-                }
+                    foreach (var row in table.GetProperty("rows").EnumerateArray())
+                        foreach (var cell in row.GetProperty("cells").EnumerateArray())
+                        {
+                            var rawText = cell.GetProperty("text").GetString() ?? "";
+                            if (!ContainsEvidence(rawText, values))
+                                continue;
+                            return new EvidenceLocation(
+                                $"ooxml:{partName}/table:{table.GetProperty("tableIndex").GetInt32()}"
+                                + $"/row:{row.GetProperty("rowIndex").GetInt32()}"
+                                + $"/cell:{cell.GetProperty("cellIndex").GetInt32()}",
+                                rawText);
+                        }
             }
         }
         catch (JsonException)
@@ -490,9 +490,15 @@ public sealed class DocumentProcessingService(
     private static string NormalizeEvidenceSearch(string value) =>
         Regex.Replace(value.ToLowerInvariant(), @"[^\p{L}\p{N}]", "");
 
-    private static IReadOnlyCollection<string> EvidenceSearchValues(object value) => value switch
+    private static IReadOnlyCollection<string> EvidenceSearchValues(string field, object value) => value switch
     {
         DateTime date => [date.ToString("dd.MM.yyyy", CultureInfo.InvariantCulture)],
+        decimal amount when field == nameof(InsuranceRecord.InsuredAmount) =>
+        [
+            amount.ToString("0.##", CultureInfo.InvariantCulture),
+            amount.ToString("0.00", CultureInfo.InvariantCulture),
+            decimal.Truncate(amount).ToString("0", CultureInfo.InvariantCulture)
+        ],
         decimal amount =>
         [
             amount.ToString("0.##", CultureInfo.InvariantCulture),

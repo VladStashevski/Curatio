@@ -350,15 +350,37 @@ public sealed class RegexInsuranceDataExtractor(ExtractionRuleSet rules) : IInsu
 
     private static bool TryParseAmount(string value, out decimal amount)
     {
+        var explicitKopecks = Regex.Match(
+            value,
+            @"(?<rubles>\d[\d\s]*(?:[.,]\d{1,2})?)(?:\s*\([\s\S]{0,400}?\))?\s*руб(?:\.|лей|ля)?\s*(?<kopecks>\d{1,2})\s*коп\.?",
+            RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+        if (explicitKopecks.Success
+            && TryParseNumericAmount(explicitKopecks.Groups["rubles"].Value, out var rubles)
+            && int.TryParse(
+                explicitKopecks.Groups["kopecks"].Value,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var kopecks)
+            && kopecks is >= 0 and <= 99)
+        {
+            amount = decimal.Truncate(rubles) + kopecks / 100m;
+            return true;
+        }
+
+        return TryParseNumericAmount(value, out amount);
+    }
+
+    private static bool TryParseNumericAmount(string value, out decimal amount)
+    {
         var normalized = Regex.Replace(
-                value
-                    .Replace("руб.", "", StringComparison.OrdinalIgnoreCase)
-                    .Replace("рублей", "", StringComparison.OrdinalIgnoreCase)
-                    .Replace("руб", "", StringComparison.OrdinalIgnoreCase)
-                    .Replace("₽", "", StringComparison.OrdinalIgnoreCase),
-                @"\s+",
-                "")
-            .Trim();
+            value
+                .Replace("руб.", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("рублей", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("руб", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("₽", "", StringComparison.OrdinalIgnoreCase),
+            @"\s+",
+            "").Trim();
 
         return decimal.TryParse(normalized, NumberStyles.Number, RussianCulture, out amount)
             || decimal.TryParse(normalized, NumberStyles.Number, CultureInfo.InvariantCulture, out amount);

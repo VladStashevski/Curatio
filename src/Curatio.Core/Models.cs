@@ -103,7 +103,7 @@ public sealed partial class InsuranceRecord : INotifyPropertyChanged
     public string FieldEvidenceJson { get; set; } = "[]";
     public string ConflictsJson { get; set; } = "[]";
     public string ReconciliationStatus { get; set; } = "pending";
-    public string ParserVersion { get; set; } = "curatio-desktop-ooxml-v2";
+    public string ParserVersion { get; set; } = "curatio-desktop-ooxml-v3";
     public long FileSize { get; set; }
     public DateTime FileModifiedAt { get; set; }
     public DateTime ProcessedAt { get; set; }
