@@ -5,7 +5,7 @@ namespace Curatio.Infrastructure;
 
 public sealed class SqliteRecordRepository(string databasePath) : IRecordRepository, ISettingsStore
 {
-    private const int CurrentExtractionVersion = 6;
+    private const int CurrentExtractionVersion = 7;
 
     private readonly string _connectionString = new SqliteConnectionStringBuilder
     {
@@ -24,6 +24,8 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
         var command = connection.CreateCommand();
         command.CommandText =
             """
+            PRAGMA journal_mode=WAL;
+            PRAGMA foreign_keys=ON;
             CREATE TABLE IF NOT EXISTS records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 claim_number TEXT NOT NULL DEFAULT '',
@@ -62,6 +64,14 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
                 source_file_name TEXT NOT NULL,
                 full_path TEXT NOT NULL,
                 case_key TEXT NOT NULL DEFAULT '',
+                source_file_hash TEXT NOT NULL DEFAULT '',
+                source_document_type TEXT NOT NULL DEFAULT 'other',
+                source_structure_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(source_structure_json)),
+                source_lineage_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_lineage_json)),
+                field_evidence_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(field_evidence_json)),
+                conflicts_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(conflicts_json)),
+                reconciliation_status TEXT NOT NULL DEFAULT 'pending',
+                parser_version TEXT NOT NULL DEFAULT '',
                 file_size INTEGER NOT NULL,
                 file_modified_at TEXT NOT NULL,
                 processed_at TEXT NOT NULL,
@@ -82,6 +92,12 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
         await command.ExecuteNonQueryAsync(cancellationToken);
         await EnsureRecordColumnsAsync(connection, cancellationToken);
         await EnsureIndexesAsync(connection, cancellationToken);
+
+        var integrity = connection.CreateCommand();
+        integrity.CommandText = "PRAGMA integrity_check;";
+        var result = Convert.ToString(await integrity.ExecuteScalarAsync(cancellationToken));
+        if (!string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException($"SQLite integrity_check: {result}");
     }
 
     public async Task<bool> IsImportedAsync(
@@ -136,6 +152,37 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
         await transaction.CommitAsync(cancellationToken);
     }
 
+    public async Task ReplaceByPathsAsync(
+        IEnumerable<string> paths,
+        IEnumerable<InsuranceRecord> records,
+        CancellationToken cancellationToken)
+    {
+        var normalizedPaths = paths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var replacement = records.ToArray();
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+
+        foreach (var path in normalizedPaths)
+        {
+            var delete = connection.CreateCommand();
+            delete.Transaction = transaction;
+            delete.CommandText = "DELETE FROM records WHERE full_path = $path;";
+            delete.Parameters.AddWithValue("$path", path);
+            await delete.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        foreach (var record in replacement)
+            await SaveOnConnectionAsync(connection, transaction, record, cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     public async Task<int> DeleteAllAsync(CancellationToken cancellationToken)
     {
         await using var connection = new SqliteConnection(_connectionString);
@@ -160,7 +207,17 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+        await SaveOnConnectionAsync(connection, null, record, cancellationToken);
+    }
+
+    private static async Task SaveOnConnectionAsync(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        InsuranceRecord record,
+        CancellationToken cancellationToken)
+    {
         var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText =
             """
             INSERT INTO records (
@@ -171,7 +228,9 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
                 medical_organization, examination_form, examination_period, care_form,
                 care_conditions, care_profile, care_period, case_outcome, primary_diagnosis,
                 diagnosis_complication, comorbid_diagnosis, operation,
-                clinical_statistical_group, defect_code, defect_description, recommendations, source_file_name, full_path, case_key, file_size,
+                clinical_statistical_group, defect_code, defect_description, recommendations, source_file_name, full_path, case_key,
+                source_file_hash, source_document_type, source_structure_json, source_lineage_json,
+                field_evidence_json, conflicts_json, reconciliation_status, parser_version, file_size,
                 file_modified_at, processed_at, status, error_message, external_id,
                 send_status, sent_at, api_error_message, extraction_version
             ) VALUES (
@@ -182,7 +241,9 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
                 $medicalOrganization, $examinationForm, $examinationPeriod, $careForm,
                 $careConditions, $careProfile, $carePeriod, $caseOutcome, $primaryDiagnosis,
                 $diagnosisComplication, $comorbidDiagnosis, $operation,
-                $clinicalStatisticalGroup, $defectCode, $defectDescription, $recommendations, $fileName, $path, $caseKey, $fileSize,
+                $clinicalStatisticalGroup, $defectCode, $defectDescription, $recommendations, $fileName, $path, $caseKey,
+                $sourceFileHash, $sourceDocumentType, $sourceStructureJson, $sourceLineageJson,
+                $fieldEvidenceJson, $conflictsJson, $reconciliationStatus, $parserVersion, $fileSize,
                 $modified, $processed, $status, $error, $externalId,
                 $sendStatus, $sentAt, $apiError, $extractionVersion
             )
@@ -220,6 +281,14 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
                 defect_code = excluded.defect_code,
                 defect_description = excluded.defect_description,
                 recommendations = excluded.recommendations,
+                source_file_hash = excluded.source_file_hash,
+                source_document_type = excluded.source_document_type,
+                source_structure_json = excluded.source_structure_json,
+                source_lineage_json = excluded.source_lineage_json,
+                field_evidence_json = excluded.field_evidence_json,
+                conflicts_json = excluded.conflicts_json,
+                reconciliation_status = excluded.reconciliation_status,
+                parser_version = excluded.parser_version,
                 processed_at = excluded.processed_at,
                 status = excluded.status,
                 error_message = excluded.error_message,
@@ -362,6 +431,14 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
         command.Parameters.AddWithValue("$fileName", record.SourceFileName);
         command.Parameters.AddWithValue("$path", record.FullPath);
         command.Parameters.AddWithValue("$caseKey", record.CaseKey);
+        command.Parameters.AddWithValue("$sourceFileHash", record.SourceFileHash);
+        command.Parameters.AddWithValue("$sourceDocumentType", record.SourceDocumentType);
+        command.Parameters.AddWithValue("$sourceStructureJson", record.SourceStructureJson);
+        command.Parameters.AddWithValue("$sourceLineageJson", record.SourceLineageJson);
+        command.Parameters.AddWithValue("$fieldEvidenceJson", record.FieldEvidenceJson);
+        command.Parameters.AddWithValue("$conflictsJson", record.ConflictsJson);
+        command.Parameters.AddWithValue("$reconciliationStatus", record.ReconciliationStatus);
+        command.Parameters.AddWithValue("$parserVersion", record.ParserVersion);
         command.Parameters.AddWithValue("$fileSize", record.FileSize);
         command.Parameters.AddWithValue("$modified", record.FileModifiedAt.ToUniversalTime().ToString("O"));
         command.Parameters.AddWithValue("$processed", record.ProcessedAt.ToUniversalTime().ToString("O"));
@@ -420,6 +497,14 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
         SourceFileName = reader.GetString(reader.GetOrdinal("source_file_name")),
         FullPath = reader.GetString(reader.GetOrdinal("full_path")),
         CaseKey = reader.GetString(reader.GetOrdinal("case_key")),
+        SourceFileHash = reader.GetString(reader.GetOrdinal("source_file_hash")),
+        SourceDocumentType = reader.GetString(reader.GetOrdinal("source_document_type")),
+        SourceStructureJson = reader.GetString(reader.GetOrdinal("source_structure_json")),
+        SourceLineageJson = reader.GetString(reader.GetOrdinal("source_lineage_json")),
+        FieldEvidenceJson = reader.GetString(reader.GetOrdinal("field_evidence_json")),
+        ConflictsJson = reader.GetString(reader.GetOrdinal("conflicts_json")),
+        ReconciliationStatus = reader.GetString(reader.GetOrdinal("reconciliation_status")),
+        ParserVersion = reader.GetString(reader.GetOrdinal("parser_version")),
         FileSize = reader.GetInt64(reader.GetOrdinal("file_size")),
         FileModifiedAt = ReadDate(reader, "file_modified_at") ?? DateTime.MinValue,
         ProcessedAt = ReadDate(reader, "processed_at") ?? DateTime.MinValue,
@@ -506,6 +591,14 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
             ["defect_description"] = "TEXT NOT NULL DEFAULT ''",
             ["recommendations"] = "TEXT NOT NULL DEFAULT ''",
             ["case_key"] = "TEXT NOT NULL DEFAULT ''",
+            ["source_file_hash"] = "TEXT NOT NULL DEFAULT ''",
+            ["source_document_type"] = "TEXT NOT NULL DEFAULT 'other'",
+            ["source_structure_json"] = "TEXT NOT NULL DEFAULT '{}'",
+            ["source_lineage_json"] = "TEXT NOT NULL DEFAULT '[]'",
+            ["field_evidence_json"] = "TEXT NOT NULL DEFAULT '[]'",
+            ["conflicts_json"] = "TEXT NOT NULL DEFAULT '[]'",
+            ["reconciliation_status"] = "TEXT NOT NULL DEFAULT 'pending'",
+            ["parser_version"] = "TEXT NOT NULL DEFAULT ''",
             ["extraction_version"] = "INTEGER NOT NULL DEFAULT 0"
         };
 
@@ -533,6 +626,8 @@ public sealed class SqliteRecordRepository(string databasePath) : IRecordReposit
             """
             CREATE UNIQUE INDEX IF NOT EXISTS ux_records_file_case_identity
                 ON records(full_path, file_size, file_modified_at, case_key);
+            CREATE INDEX IF NOT EXISTS ix_records_source_hash
+                ON records(source_file_hash);
             """;
         await create.ExecuteNonQueryAsync(cancellationToken);
     }

@@ -45,6 +45,18 @@ public sealed class ExtractionTests
     }
 
     [Fact]
+    public void ClinicalStatisticalGroupStopsBeforeNoDefectsText()
+    {
+        var record = _extractor.Extract(
+            "КСГ: st32.003 - Операции на желчном пузыре. Дефектов не выявлено",
+            "ksg.docx",
+            10,
+            DateTime.UtcNow);
+
+        Assert.Equal("st32.003 - Операции на желчном пузыре.", record.ClinicalStatisticalGroup);
+    }
+
+    [Fact]
     public void ExtractsMedicalExpertiseFieldsWithoutInventingClientName()
     {
         var text =

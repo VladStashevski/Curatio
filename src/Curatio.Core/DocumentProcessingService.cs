@@ -1,10 +1,52 @@
 namespace Curatio.Core;
 
+using System.Security.Cryptography;
+using System.Globalization;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+
 public sealed class DocumentProcessingService(
     IDocumentTextReader textReader,
     IInsuranceDataExtractor extractor,
     IRecordRepository repository) : IDocumentProcessingService
 {
+    private static readonly string[] EvidenceFieldNames =
+    [
+        nameof(InsuranceRecord.ClaimNumber),
+        nameof(InsuranceRecord.ClientFullName),
+        nameof(InsuranceRecord.EventDate),
+        nameof(InsuranceRecord.ClaimType),
+        nameof(InsuranceRecord.CheckType),
+        nameof(InsuranceRecord.PolicyNumber),
+        nameof(InsuranceRecord.InsuredAmount),
+        nameof(InsuranceRecord.FinancialSanctionsAmount),
+        nameof(InsuranceRecord.PaymentReductionAmount),
+        nameof(InsuranceRecord.PenaltyAmount),
+        nameof(InsuranceRecord.EventDescription),
+        nameof(InsuranceRecord.InsuranceOrganization),
+        nameof(InsuranceRecord.ExpertName),
+        nameof(InsuranceRecord.ExpertSpecialty),
+        nameof(InsuranceRecord.MedicalDocumentNumber),
+        nameof(InsuranceRecord.Gender),
+        nameof(InsuranceRecord.BirthDate),
+        nameof(InsuranceRecord.MedicalOrganization),
+        nameof(InsuranceRecord.ExaminationForm),
+        nameof(InsuranceRecord.ExaminationPeriod),
+        nameof(InsuranceRecord.CareForm),
+        nameof(InsuranceRecord.CareConditions),
+        nameof(InsuranceRecord.CareProfile),
+        nameof(InsuranceRecord.CarePeriod),
+        nameof(InsuranceRecord.CaseOutcome),
+        nameof(InsuranceRecord.PrimaryDiagnosis),
+        nameof(InsuranceRecord.DiagnosisComplication),
+        nameof(InsuranceRecord.ComorbidDiagnosis),
+        nameof(InsuranceRecord.Operation),
+        nameof(InsuranceRecord.ClinicalStatisticalGroup),
+        nameof(InsuranceRecord.DefectCode),
+        nameof(InsuranceRecord.DefectDescription),
+        nameof(InsuranceRecord.Recommendations)
+    ];
+
     public async Task<ScanResult> ScanAsync(
         string folder,
         bool recursive,
@@ -37,21 +79,48 @@ public sealed class DocumentProcessingService(
             cancellationToken.ThrowIfCancellationRequested();
             var path = files[index];
             progress?.Report(new ProcessingProgress(index, files.Length, Path.GetFileName(path)));
+            var info = new FileInfo(path);
+            var hash = "";
 
             try
             {
-                if (IsNonCaseDocument(path))
+                var documentType = ClassifyDocument(path);
+                hash = await HashFileAsync(path, cancellationToken);
+                var document = await textReader.ReadDocumentAsync(path, cancellationToken);
+                var documentRecords = extractor.ExtractRecords(
+                    document.Text,
+                    path,
+                    info.Length,
+                    info.LastWriteTimeUtc).ToList();
+
+                if (documentRecords.Count == 0)
                 {
-                    logs.Add(new ProcessingLog(
-                        DateTime.Now,
-                        Path.GetFileName(path),
-                        "Служебный документ пропущен: случаи и суммы берутся из заключений."));
-                    continue;
+                    documentRecords.Add(new InsuranceRecord
+                    {
+                        SourceFileName = Path.GetFileName(path),
+                        FullPath = Path.GetFullPath(path),
+                        CaseKey = $"source|{hash}",
+                        FileSize = info.Length,
+                        FileModifiedAt = info.LastWriteTimeUtc,
+                        ProcessedAt = DateTime.UtcNow,
+                        Status = DocumentStatus.Unprocessed
+                    });
                 }
 
-                var info = new FileInfo(path);
-                var text = await textReader.ReadTextAsync(path, cancellationToken);
-                extractedRecords.AddRange(extractor.ExtractRecords(text, path, info.Length, info.LastWriteTimeUtc));
+                foreach (var record in documentRecords)
+                {
+                    record.SourceFileHash = hash;
+                    record.SourceDocumentType = documentType;
+                    record.SourceStructureJson = document.StructureJson;
+                    record.ParserVersion = "curatio-desktop-ooxml-v2";
+                    record.ReconciliationStatus = "pending";
+                    if (documentType is "registry" or "cover_letter")
+                        record.Status = DocumentStatus.Unprocessed;
+                    record.FieldEvidenceJson = BuildFieldEvidence(record);
+                    record.SourceLineageJson = BuildLineage(record);
+                }
+
+                extractedRecords.AddRange(documentRecords);
             }
             catch (OperationCanceledException)
             {
@@ -65,6 +134,10 @@ public sealed class DocumentProcessingService(
                     SourceFileName = Path.GetFileName(path),
                     FullPath = Path.GetFullPath(path),
                     CaseKey = $"error|{Path.GetFullPath(path)}",
+                    SourceFileHash = hash,
+                    SourceDocumentType = ClassifyDocument(path),
+                    FileSize = info.Exists ? info.Length : 0,
+                    FileModifiedAt = info.Exists ? info.LastWriteTimeUtc : DateTime.MinValue,
                     ProcessedAt = DateTime.UtcNow,
                     Status = DocumentStatus.Error,
                     ErrorMessage = SafeMessage(exception)
@@ -73,9 +146,7 @@ public sealed class DocumentProcessingService(
         }
 
         var records = MergeCaseRecords(extractedRecords);
-        await repository.DeleteByPathsAsync(replacedPaths, cancellationToken);
-        foreach (var record in records)
-            await repository.SaveAsync(record, cancellationToken);
+        await repository.ReplaceByPathsAsync(replacedPaths, records, cancellationToken);
 
         progress?.Report(new ProcessingProgress(files.Length, files.Length, ""));
         return new ScanResult(
@@ -100,11 +171,21 @@ public sealed class DocumentProcessingService(
                 continue;
             }
 
+            var conflicts = DetectConflicts(existing, record);
             MergeInto(existing, record);
+            existing.SourceLineageJson = MergeJsonArrays(
+                existing.SourceLineageJson,
+                record.SourceLineageJson);
+            existing.ConflictsJson = MergeJsonArrays(
+                existing.ConflictsJson,
+                JsonSerializer.Serialize(conflicts));
+            if (conflicts.Count > 0)
+                existing.Status = DocumentStatus.NeedsReview;
         }
 
         foreach (var record in merged)
-            record.Status = HasRequiredFields(record) ? DocumentStatus.Processed : record.Status;
+            if (record.Status != DocumentStatus.NeedsReview && HasRequiredFields(record))
+                record.Status = DocumentStatus.Processed;
 
         return merged;
     }
@@ -228,6 +309,9 @@ public sealed class DocumentProcessingService(
         if (record.Status == DocumentStatus.Error)
             return $"error|{record.FullPath}";
 
+        if (record.SourceDocumentType is "registry" or "cover_letter")
+            return $"source|{record.SourceFileHash}|{record.CaseKey}";
+
         if (!string.IsNullOrWhiteSpace(record.PolicyNumber) && !string.IsNullOrWhiteSpace(record.MedicalDocumentNumber))
         {
             return string.Join(
@@ -252,13 +336,6 @@ public sealed class DocumentProcessingService(
         return 10;
     }
 
-    private static bool IsNonCaseDocument(string path)
-    {
-        var fileName = Path.GetFileName(path);
-        return fileName.Contains("Реестр", StringComparison.OrdinalIgnoreCase)
-            || fileName.Contains("Сопроводительное письмо", StringComparison.OrdinalIgnoreCase);
-    }
-
     private static bool IsSpecificClaimNumber(string value) =>
         value.EndsWith("Э", StringComparison.OrdinalIgnoreCase)
         || value.EndsWith("М", StringComparison.OrdinalIgnoreCase);
@@ -279,4 +356,226 @@ public sealed class DocumentProcessingService(
         && !string.IsNullOrWhiteSpace(record.PolicyNumber)
         && (!string.IsNullOrWhiteSpace(record.ClientFullName)
             || !string.IsNullOrWhiteSpace(record.MedicalDocumentNumber));
+
+    private static string ClassifyDocument(string path)
+    {
+        var fileName = Path.GetFileName(path);
+        if (fileName.Contains("Реестр", StringComparison.OrdinalIgnoreCase))
+            return "registry";
+        if (fileName.Contains("Сопроводительное письмо", StringComparison.OrdinalIgnoreCase))
+            return "cover_letter";
+        if (fileName.Contains("Заключение", StringComparison.OrdinalIgnoreCase))
+            return "conclusion";
+        if (fileName.Contains("ЭЗ", StringComparison.OrdinalIgnoreCase))
+            return "expert_report";
+        return "other";
+    }
+
+    private static async Task<string> HashFileAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = File.OpenRead(path);
+        var hash = await SHA256.HashDataAsync(stream, cancellationToken);
+        return Convert.ToHexStringLower(hash);
+    }
+
+    private static string BuildLineage(InsuranceRecord record) =>
+        JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                sha256 = record.SourceFileHash,
+                fileName = record.SourceFileName,
+                fullPath = record.FullPath,
+                documentType = record.SourceDocumentType,
+                caseKey = record.CaseKey,
+                parserVersion = record.ParserVersion,
+                structure = ParseJson(record.SourceStructureJson)
+            }
+        });
+
+    private static string BuildFieldEvidence(InsuranceRecord record)
+    {
+        var fields = EvidenceFieldNames
+            .Select(name => (Name: name, Value: typeof(InsuranceRecord).GetProperty(name)!.GetValue(record)))
+            .Where(entry => entry.Value is not null && !string.IsNullOrWhiteSpace(entry.Value.ToString()))
+            .Select(entry =>
+            {
+                var normalizedValue = EvidenceValue(entry.Value!);
+                var location = FindEvidenceLocation(
+                    record.SourceStructureJson,
+                    EvidenceSearchValues(entry.Value!));
+                return new
+                {
+                    field = entry.Name,
+                    rawValue = location?.RawText ?? normalizedValue,
+                    normalizedValue,
+                    locator = location?.Locator ?? "flattened-document-text",
+                    extractorRule = "curatio-regex-v7",
+                    parserVersion = record.ParserVersion,
+                    confidence = location is null ? 0.65 : 0.85,
+                    state = "extracted"
+                };
+            });
+        return JsonSerializer.Serialize(fields);
+    }
+
+    private static EvidenceLocation? FindEvidenceLocation(
+        string structureJson,
+        IReadOnlyCollection<string> values)
+    {
+        if (string.IsNullOrWhiteSpace(structureJson))
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(structureJson);
+            if (!document.RootElement.TryGetProperty("parts", out var parts))
+                return null;
+
+            foreach (var part in parts.EnumerateArray())
+            {
+                var partName = part.TryGetProperty("name", out var name)
+                    ? name.GetString() ?? "body"
+                    : "body";
+                if (part.TryGetProperty("paragraphs", out var paragraphs))
+                {
+                    foreach (var paragraph in paragraphs.EnumerateArray())
+                    {
+                        var rawText = paragraph.GetProperty("text").GetString() ?? "";
+                        if (!ContainsEvidence(rawText, values))
+                            continue;
+                        var index = paragraph.GetProperty("index").GetInt32();
+                        return new EvidenceLocation(
+                            $"ooxml:{partName}/paragraph:{index}",
+                            rawText);
+                    }
+                }
+
+                if (!part.TryGetProperty("tables", out var tables))
+                    continue;
+                foreach (var table in tables.EnumerateArray())
+                foreach (var row in table.GetProperty("rows").EnumerateArray())
+                foreach (var cell in row.GetProperty("cells").EnumerateArray())
+                {
+                    var rawText = cell.GetProperty("text").GetString() ?? "";
+                    if (!ContainsEvidence(rawText, values))
+                        continue;
+                    return new EvidenceLocation(
+                        $"ooxml:{partName}/table:{table.GetProperty("tableIndex").GetInt32()}"
+                        + $"/row:{row.GetProperty("rowIndex").GetInt32()}"
+                        + $"/cell:{cell.GetProperty("cellIndex").GetInt32()}",
+                        rawText);
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        return null;
+    }
+
+    private static bool ContainsEvidence(string source, IEnumerable<string> values)
+    {
+        var normalizedSource = NormalizeEvidenceSearch(source);
+        return values
+            .Select(NormalizeEvidenceSearch)
+            .Where(value => value.Length >= 2)
+            .Any(normalizedSource.Contains);
+    }
+
+    private static string NormalizeEvidenceSearch(string value) =>
+        Regex.Replace(value.ToLowerInvariant(), @"[^\p{L}\p{N}]", "");
+
+    private static IReadOnlyCollection<string> EvidenceSearchValues(object value) => value switch
+    {
+        DateTime date => [date.ToString("dd.MM.yyyy", CultureInfo.InvariantCulture)],
+        decimal amount =>
+        [
+            amount.ToString("0.##", CultureInfo.InvariantCulture),
+            amount.ToString("0.00", CultureInfo.InvariantCulture)
+        ],
+        _ => [value.ToString() ?? ""]
+    };
+
+    private static object EvidenceValue(object value) => value switch
+    {
+        DateTime date => date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+        decimal amount => amount.ToString("0.00", CultureInfo.InvariantCulture),
+        _ => value
+    };
+
+    private sealed record EvidenceLocation(string Locator, string RawText);
+
+    private static List<object> DetectConflicts(
+        InsuranceRecord target,
+        InsuranceRecord source)
+    {
+        var names = new[]
+        {
+            nameof(InsuranceRecord.ClaimNumber),
+            nameof(InsuranceRecord.ClientFullName),
+            nameof(InsuranceRecord.EventDate),
+            nameof(InsuranceRecord.PolicyNumber),
+            nameof(InsuranceRecord.MedicalDocumentNumber),
+            nameof(InsuranceRecord.BirthDate),
+            nameof(InsuranceRecord.CarePeriod),
+            nameof(InsuranceRecord.CaseOutcome),
+            nameof(InsuranceRecord.PrimaryDiagnosis),
+            nameof(InsuranceRecord.ClinicalStatisticalGroup),
+            nameof(InsuranceRecord.DefectCode),
+            nameof(InsuranceRecord.DefectDescription),
+            nameof(InsuranceRecord.InsuredAmount),
+            nameof(InsuranceRecord.FinancialSanctionsAmount),
+            nameof(InsuranceRecord.PaymentReductionAmount),
+            nameof(InsuranceRecord.PenaltyAmount)
+        };
+        var conflicts = new List<object>();
+        foreach (var name in names)
+        {
+            var property = typeof(InsuranceRecord).GetProperty(name)!;
+            var left = property.GetValue(target)?.ToString();
+            var right = property.GetValue(source)?.ToString();
+            if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+                continue;
+            if (Normalize(left).Equals(Normalize(right), StringComparison.OrdinalIgnoreCase))
+                continue;
+            conflicts.Add(new
+            {
+                field = name,
+                existing = left,
+                incoming = right,
+                existingSource = target.SourceFileHash,
+                incomingSource = source.SourceFileHash
+            });
+        }
+        return conflicts;
+    }
+
+    private static string MergeJsonArrays(string left, string right)
+    {
+        var entries = new List<JsonElement>();
+        AddJsonArray(entries, left);
+        AddJsonArray(entries, right);
+        return JsonSerializer.Serialize(entries);
+    }
+
+    private static void AddJsonArray(List<JsonElement> entries, string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return;
+        using var document = JsonDocument.Parse(json);
+        if (document.RootElement.ValueKind != JsonValueKind.Array)
+            return;
+        entries.AddRange(document.RootElement.EnumerateArray().Select(element => element.Clone()));
+    }
+
+    private static JsonElement ParseJson(string json)
+    {
+        using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
+        return document.RootElement.Clone();
+    }
 }

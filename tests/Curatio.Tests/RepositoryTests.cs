@@ -30,7 +30,11 @@ public sealed class RepositoryTests
             Operation = "-",
             ClinicalStatisticalGroup = "st12.012",
             DefectCode = "3.11",
-            DefectDescription = "В представленной ПМД отсутствует лист врачебных назначений"
+            DefectDescription = "В представленной ПМД отсутствует лист врачебных назначений",
+            SourceFileHash = new string('a', 64),
+            SourceDocumentType = "conclusion",
+            SourceStructureJson = "{\"tables\":[]}",
+            FieldEvidenceJson = "[{\"field\":\"ClaimNumber\"}]"
         };
 
         await repository.SaveAsync(record, CancellationToken.None);
@@ -47,12 +51,56 @@ public sealed class RepositoryTests
         Assert.Equal("st12.012", loaded.ClinicalStatisticalGroup);
         Assert.Equal("3.11", loaded.DefectCode);
         Assert.Contains("лист врачебных назначений", loaded.DefectDescription);
+        Assert.Equal(new string('a', 64), loaded.SourceFileHash);
+        Assert.Equal("conclusion", loaded.SourceDocumentType);
+        Assert.Contains("tables", loaded.SourceStructureJson);
 
         record.ExpertName = "Обновлённый Эксперт";
         await repository.SaveAsync(record, CancellationToken.None);
 
         loaded = Assert.Single(await repository.GetAllAsync());
         Assert.Equal("Обновлённый Эксперт", loaded.ExpertName);
+    }
+
+    [Fact]
+    public async Task ReplaceByPathsRollsBackDeleteWhenAnyReplacementIsInvalid()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"curatio-atomic-{Guid.NewGuid():N}");
+        var repository = new SqliteRecordRepository(Path.Combine(directory, "test.db"));
+        await repository.InitializeAsync();
+        var path = Path.Combine(directory, "sample.docx");
+        var original = new InsuranceRecord
+        {
+            ClaimNumber = "ORIGINAL",
+            SourceFileName = "sample.docx",
+            FullPath = path,
+            CaseKey = "case-1",
+            FileSize = 42,
+            FileModifiedAt = DateTime.UtcNow,
+            ProcessedAt = DateTime.UtcNow,
+            Status = DocumentStatus.Processed
+        };
+        await repository.SaveAsync(original, CancellationToken.None);
+        var invalid = new InsuranceRecord
+        {
+            ClaimNumber = "BROKEN",
+            SourceFileName = "sample.docx",
+            FullPath = path,
+            CaseKey = "case-1",
+            FileSize = 42,
+            FileModifiedAt = original.FileModifiedAt,
+            ProcessedAt = DateTime.UtcNow,
+            Status = DocumentStatus.Processed,
+            SourceStructureJson = "{"
+        };
+
+        await Assert.ThrowsAnyAsync<Exception>(() => repository.ReplaceByPathsAsync(
+            [path],
+            [invalid],
+            CancellationToken.None));
+
+        var loaded = Assert.Single(await repository.GetAllAsync());
+        Assert.Equal("ORIGINAL", loaded.ClaimNumber);
     }
 
     [Fact]

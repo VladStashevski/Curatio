@@ -96,6 +96,14 @@ public sealed partial class InsuranceRecord : INotifyPropertyChanged
     public string SourceFileName { get; set; } = "";
     public string FullPath { get; set; } = "";
     public string CaseKey { get; set; } = "";
+    public string SourceFileHash { get; set; } = "";
+    public string SourceDocumentType { get; set; } = "other";
+    public string SourceStructureJson { get; set; } = "{}";
+    public string SourceLineageJson { get; set; } = "[]";
+    public string FieldEvidenceJson { get; set; } = "[]";
+    public string ConflictsJson { get; set; } = "[]";
+    public string ReconciliationStatus { get; set; } = "pending";
+    public string ParserVersion { get; set; } = "curatio-desktop-ooxml-v2";
     public long FileSize { get; set; }
     public DateTime FileModifiedAt { get; set; }
     public DateTime ProcessedAt { get; set; }

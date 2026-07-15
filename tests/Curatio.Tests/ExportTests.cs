@@ -36,5 +36,7 @@ public sealed class ExportTests
         Assert.Contains("Синтетический Клиент", csv);
         using var workbook = new XLWorkbook(xlsxPath);
         Assert.Equal("Синтетический Клиент", workbook.Worksheet(1).Cell(2, 3).GetString());
+        Assert.True(File.Exists(Path.ChangeExtension(csvPath, ".curatio.json")));
+        Assert.True(File.Exists(Path.ChangeExtension(xlsxPath, ".curatio.json")));
     }
 }

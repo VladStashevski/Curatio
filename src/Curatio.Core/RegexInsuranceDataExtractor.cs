@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Curatio.Core;
@@ -264,7 +266,9 @@ public sealed class RegexInsuranceDataExtractor(ExtractionRuleSet rules) : IInsu
         {
             var match = Regex.Match(text, pattern, RegexOptions.IgnoreCase | RegexOptions.Multiline, TimeSpan.FromSeconds(1));
             if (match.Success)
-                return Regex.Replace(match.Groups["value"].Value.Trim(), @"\s+", " ");
+                return NormalizeExtractedField(
+                    field,
+                    Regex.Replace(match.Groups["value"].Value.Trim(), @"\s+", " "));
         }
 
         return "";
@@ -308,7 +312,7 @@ public sealed class RegexInsuranceDataExtractor(ExtractionRuleSet rules) : IInsu
             record.MedicalDocumentNumber,
             record.BirthDate,
             record.CarePeriod,
-            record.ClaimNumber);
+            FirstNonEmpty(record.ClaimNumber, record.FullPath));
 
     private static string BuildCaseKey(string policyNumber, string medicalDocumentNumber, DateTime? birthDate, string carePeriod, string fallback)
     {
@@ -323,9 +327,9 @@ public sealed class RegexInsuranceDataExtractor(ExtractionRuleSet rules) : IInsu
                 NormalizeCell(carePeriod));
         }
 
-        return string.IsNullOrWhiteSpace(fallback)
-            ? Guid.NewGuid().ToString("N")
-            : $"fallback|{NormalizeCell(fallback)}";
+        var normalizedFallback = NormalizeCell(fallback);
+        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(normalizedFallback));
+        return $"fallback|{Convert.ToHexStringLower(digest)}";
     }
 
     private static string CarePeriod(DateTime startDate, DateTime endDate) =>
@@ -365,6 +369,26 @@ public sealed class RegexInsuranceDataExtractor(ExtractionRuleSet rules) : IInsu
 
     private static string NormalizeCell(string value) =>
         Regex.Replace(value.Trim(), @"\s+", " ");
+
+    private static string NormalizeExtractedField(string field, string value)
+    {
+        var normalized = NormalizeCell(value);
+        if (field.Equals("caseOutcome", StringComparison.OrdinalIgnoreCase))
+            return normalized.Trim(' ', '|', ';', ':');
+
+        if (field.Equals("clinicalStatisticalGroup", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = Regex.Split(
+                    normalized,
+                    @"\s+(?=(?:По\s+случаю|Дефект\w*|Код\s+дефекта|Выводы)\b)",
+                    RegexOptions.IgnoreCase,
+                    TimeSpan.FromSeconds(1))
+                .FirstOrDefault() ?? normalized;
+            return normalized.Trim(' ', '|', ';', ':');
+        }
+
+        return normalized;
+    }
 
     private static DefectDetails ExtractDefectDetails(string text, string path)
     {

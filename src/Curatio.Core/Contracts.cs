@@ -3,6 +3,11 @@ namespace Curatio.Core;
 public interface IDocumentTextReader
 {
     Task<string> ReadTextAsync(string path, CancellationToken cancellationToken);
+
+    async Task<DocumentReadResult> ReadDocumentAsync(
+        string path,
+        CancellationToken cancellationToken) =>
+        new(await ReadTextAsync(path, cancellationToken), "{}");
 }
 
 public interface IInsuranceDataExtractor
@@ -16,6 +21,10 @@ public interface IRecordRepository
     Task InitializeAsync(CancellationToken cancellationToken = default);
     Task<bool> IsImportedAsync(string path, long size, DateTime modifiedAt, CancellationToken cancellationToken);
     Task DeleteByPathsAsync(IEnumerable<string> paths, CancellationToken cancellationToken);
+    Task ReplaceByPathsAsync(
+        IEnumerable<string> paths,
+        IEnumerable<InsuranceRecord> records,
+        CancellationToken cancellationToken);
     Task<int> DeleteAllAsync(CancellationToken cancellationToken);
     Task SaveAsync(InsuranceRecord record, CancellationToken cancellationToken);
     Task UpdateAsync(InsuranceRecord record, CancellationToken cancellationToken);
@@ -26,6 +35,8 @@ public static class DocumentTextMarkers
 {
     public const string TableRowPrefix = "__CURATIO_TABLE_ROW__";
 }
+
+public sealed record DocumentReadResult(string Text, string StructureJson);
 
 public interface ISettingsStore
 {

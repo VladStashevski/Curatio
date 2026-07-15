@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using ClosedXML.Excel;
 using Curatio.Core;
 
@@ -17,19 +18,21 @@ public sealed class RecordExportService : IRecordExportService
         "Осложнение диагноза", "Сопутствующие диагнозы", "Операция", "КСГ",
         "Код дефекта", "Дефект", "Выводы", "Рекомендации", "Сумма случая", "Финансовые санкции",
         "Неоплата/уменьшение", "Штраф", "Исходный файл",
-        "Полный путь", "Дата обработки", "Статус"
+        "Полный путь", "Дата обработки", "Статус", "SHA-256 источника",
+        "Тип источника", "Версия парсера", "Статус сверки", "Конфликты JSON"
     ];
 
     public Task ExportXlsxAsync(IEnumerable<InsuranceRecord> records, string path, CancellationToken cancellationToken) =>
         Task.Run(() =>
         {
+            var snapshot = records.ToArray();
             using var workbook = new XLWorkbook();
             var sheet = workbook.Worksheets.Add("Страховые случаи");
             for (var column = 0; column < Headers.Length; column++)
                 sheet.Cell(1, column + 1).Value = Headers[column];
 
             var row = 2;
-            foreach (var record in records)
+            foreach (var record in snapshot)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var values = Values(record);
@@ -48,17 +51,21 @@ public sealed class RecordExportService : IRecordExportService
             sheet.Columns().AdjustToContents(8, 50);
             sheet.RangeUsed()?.SetAutoFilter();
             workbook.SaveAs(path);
+            WriteAuditSidecar(snapshot, path);
         }, cancellationToken);
 
     public async Task ExportCsvAsync(IEnumerable<InsuranceRecord> records, string path, CancellationToken cancellationToken)
     {
+        var snapshot = records.ToArray();
         await using var writer = new StreamWriter(path, false, new UTF8Encoding(true));
         await writer.WriteLineAsync(string.Join(';', Headers.Select(Escape)));
-        foreach (var record in records)
+        foreach (var record in snapshot)
         {
             cancellationToken.ThrowIfCancellationRequested();
             await writer.WriteLineAsync(string.Join(';', Values(record).Select(value => Escape(Convert.ToString(value, CultureInfo.GetCultureInfo("ru-RU")) ?? ""))));
         }
+        await writer.FlushAsync(cancellationToken);
+        WriteAuditSidecar(snapshot, path);
     }
 
     private static object[] Values(InsuranceRecord record) =>
@@ -98,8 +105,53 @@ public sealed class RecordExportService : IRecordExportService
         record.SourceFileName,
         record.FullPath,
         record.ProcessedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm"),
-        StatusText(record.Status)
+        StatusText(record.Status),
+        record.SourceFileHash,
+        record.SourceDocumentType,
+        record.ParserVersion,
+        record.ReconciliationStatus,
+        record.ConflictsJson
     ];
+
+    private static void WriteAuditSidecar(
+        IReadOnlyCollection<InsuranceRecord> records,
+        string exportPath)
+    {
+        var sidecarPath = Path.ChangeExtension(exportPath, ".curatio.json");
+        var payload = new
+        {
+            schemaVersion = 1,
+            parserVersion = "curatio-desktop-ooxml-v2",
+            exportedAt = DateTime.UtcNow,
+            records = records.Select(record => new
+            {
+                record.CaseKey,
+                record.SourceFileName,
+                record.FullPath,
+                record.SourceFileHash,
+                record.SourceDocumentType,
+                record.ParserVersion,
+                record.Status,
+                record.ReconciliationStatus,
+                structure = ParseJson(record.SourceStructureJson),
+                lineage = ParseJson(record.SourceLineageJson),
+                evidence = ParseJson(record.FieldEvidenceJson),
+                conflicts = ParseJson(record.ConflictsJson)
+            })
+        };
+        File.WriteAllText(
+            sidecarPath,
+            JsonSerializer.Serialize(payload, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            }));
+    }
+
+    private static JsonElement ParseJson(string json)
+    {
+        using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "null" : json);
+        return document.RootElement.Clone();
+    }
 
     private static string Escape(string value) => $"\"{value.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
 

@@ -22,6 +22,50 @@ public sealed class DocumentProcessingTests
     }
 
     [Fact]
+    public async Task PreservesStructuredOoxmlCoordinates()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"curatio-structure-{Guid.NewGuid():N}");
+        var path = TestDocumentFactory.CreateWithHeader(
+            directory,
+            "structure.docx",
+            "Заголовок",
+            "Содержимое документа");
+
+        var document = await new OpenXmlDocumentTextReader()
+            .ReadDocumentAsync(path, CancellationToken.None);
+
+        Assert.Contains("Содержимое документа", document.Text);
+        Assert.Contains("\"parts\"", document.StructureJson);
+        Assert.Contains("\"paragraphs\"", document.StructureJson);
+        Assert.Contains("\"tables\"", document.StructureJson);
+    }
+
+    [Fact]
+    public async Task RetainsRegistryAsSourceOnlyRecord()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"curatio-registry-{Guid.NewGuid():N}");
+        TestDocumentFactory.Create(
+            directory,
+            "810001_Реестр_заключений_ЭКМП.docx",
+            "Номер страхового случая: REGISTRY-1",
+            "Номер полиса: POLICY-1");
+        var repository = new SqliteRecordRepository(Path.Combine(directory, "test.db"));
+        await repository.InitializeAsync();
+        var service = new DocumentProcessingService(
+            new OpenXmlDocumentTextReader(),
+            new RegexInsuranceDataExtractor(TestDocumentFactory.Rules()),
+            repository);
+
+        var result = await service.ScanAsync(directory, false, null, CancellationToken.None);
+        var record = Assert.Single(result.Records);
+
+        Assert.Equal("registry", record.SourceDocumentType);
+        Assert.Equal(DocumentStatus.Unprocessed, record.Status);
+        Assert.Equal(64, record.SourceFileHash.Length);
+        Assert.NotEqual("{}", record.SourceStructureJson);
+    }
+
+    [Fact]
     public async Task ReadsSyntheticDocxAndContinuesAfterCorruptedDocument()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"curatio-docs-{Guid.NewGuid():N}");
@@ -45,8 +89,10 @@ public sealed class DocumentProcessingTests
         var result = await service.ScanAsync(directory, false, null, CancellationToken.None);
 
         Assert.Equal(2, result.Records.Count);
-        Assert.Contains(result.Records, record => record.Status == DocumentStatus.Processed);
-        Assert.Contains(result.Records, record => record.Status == DocumentStatus.Error);
+        var processed = Assert.Single(result.Records, record => record.Status == DocumentStatus.Processed);
+        var corrupted = Assert.Single(result.Records, record => record.Status == DocumentStatus.Error);
+        Assert.Contains("ooxml:body/paragraph:", processed.FieldEvidenceJson);
+        Assert.Equal(64, corrupted.SourceFileHash.Length);
         Assert.Equal(2, result.Logs.Count);
         Assert.Contains(result.Logs, log => log.Message.Contains("Временный", StringComparison.Ordinal));
     }
